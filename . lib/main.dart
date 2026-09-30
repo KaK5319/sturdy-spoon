@@ -124,7 +124,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
     if (_animController.isAnimating) return;
 
     final dx = details.localPosition.dx;
-    
+
     if (_isRightToLeft) {
       if (dx > screenWidth * 0.3) {
         if (_currentPage >= _totalPages) return;
@@ -154,7 +154,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
 
     double delta = details.primaryDelta ?? 0;
     double factor = 0;
-    
+
     if (_isRightToLeft) {
       factor = _isNextPage ? -delta : delta;
     } else {
@@ -212,7 +212,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
               : SafeArea(
                   child: Column(
                     children: [
-                      // 上部バー
+                      // 上部コントロール
                       Container(
                         color: Colors.black87,
                         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -252,7 +252,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
                         ),
                       ),
 
-                      // 中央めくりエリア
+                      // メイン閲覧エリア（シリンダーロールめくり）
                       Expanded(
                         child: GestureDetector(
                           behavior: HitTestBehavior.opaque,
@@ -265,7 +265,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
                               // 1. 次のページ（下層）
                               _buildPageView(_getUnderPageNumber()),
 
-                              // 2. めくられるページ（完全垂直カット＋縦ロール影）
+                              // 2. めくられるページ（上層：完全垂直直線カット＋円筒ロール影）
                               if (_dragProgress > 0.0)
                                 _buildVerticalRollerEffect(_getTopPageNumber(), screenWidth),
                             ],
@@ -318,23 +318,23 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
     );
   }
 
-  // 完全垂直なロールエフェクト描画
+  // 完全垂直なシリンダー（ロール）エフェクトの自作ロジック
   Widget _buildVerticalRollerEffect(int pageNum, double screenWidth) {
     final isFromRight = (_isRightToLeft && _isNextPage) || (!_isRightToLeft && !_isNextPage);
     final progressWidth = screenWidth * _dragProgress;
     final remainWidth = screenWidth - progressWidth;
 
-    final rollWidth = math.min(progressWidth, 60.0);
+    final rollWidth = math.min(progressWidth, 50.0);
 
     return Stack(
       children: [
-        // A. 残っている表面（完全垂直カット）
+        // A. 表面（垂直切り抜き）
         ClipRect(
           clipper: VerticalStraightClipper(remainWidth: remainWidth, isFromRight: isFromRight),
           child: _buildPageView(pageNum),
         ),
 
-        // B. 垂直な境界線の陰影
+        // B. 垂直境界線の影（180度まっすぐ）
         Positioned(
           top: 0,
           bottom: 0,
@@ -351,7 +351,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
           ),
         ),
 
-        // C. 筒状ロール部分（垂直スライド）
+        // C. 円筒状（ロール）ハイライト/シャドウ
         Positioned(
           top: 0,
           bottom: 0,
@@ -378,7 +378,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
   }
 }
 
-// 画面上部から下部まで完全に垂直（直線）に切り抜く
+// 画面上部から下部まで完全に垂直直線でマスクするクリッパー
 class VerticalStraightClipper extends CustomClipper<Rect> {
   final double remainWidth;
   final bool isFromRight;

@@ -1,7 +1,6 @@
-import 'dart:io';
 import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -352,11 +351,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     await _controller.animateTo(
       1.0,
       duration: Duration(
-        milliseconds:
-            math.max(
-              120,
-              ((1.0 - start) * 360).round(),
-            ),
+        milliseconds: math.max(
+          120,
+          ((1.0 - start) * 360).round(),
+        ),
       ),
       curve: Curves.easeOutCubic,
     );
@@ -395,11 +393,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
     await _controller.animateTo(
       0.0,
       duration: Duration(
-        milliseconds:
-            math.max(
-              100,
-              (start * 260).round(),
-            ),
+        milliseconds: math.max(
+          100,
+          (start * 260).round(),
+        ),
       ),
       curve: Curves.easeOutCubic,
     );
@@ -416,9 +413,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // ============================================================
 
   Future<void> _goToPage(int page) async {
-    if (page < 1 ||
-        page > _totalPages ||
-        page == _currentPage) {
+    if (page < 1 || page > _totalPages || page == _currentPage) {
       return;
     }
 
@@ -442,13 +437,10 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth =
-        MediaQuery.of(context).size.width;
+    final screenWidth = MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor:
-          const Color(0xFF302A25),
-
+      backgroundColor: const Color(0xFF302A25),
       body: _isLoading
           ? const Center(
               child: CircularProgressIndicator(),
@@ -463,34 +455,21 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
                   child: Column(
                     children: [
                       _buildTopBar(),
-
                       Expanded(
                         child: GestureDetector(
-                          behavior:
-                              HitTestBehavior.opaque,
-
-                          onHorizontalDragStart:
-                              (details) =>
-                                  _onDragStart(
+                          behavior: HitTestBehavior.opaque,
+                          onHorizontalDragStart: (details) => _onDragStart(
                             details,
                             screenWidth,
                           ),
-
-                          onHorizontalDragUpdate:
-                              (details) =>
-                                  _onDragUpdate(
+                          onHorizontalDragUpdate: (details) => _onDragUpdate(
                             details,
                             screenWidth,
                           ),
-
-                          onHorizontalDragEnd:
-                              _onDragEnd,
-
-                          child:
-                              _buildReaderArea(),
+                          onHorizontalDragEnd: _onDragEnd,
+                          child: _buildReaderArea(),
                         ),
                       ),
-
                       _buildBottomBar(),
                     ],
                   ),
@@ -510,13 +489,11 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
         horizontal: 16,
       ),
       child: Row(
-        mainAxisAlignment:
-            MainAxisAlignment.spaceBetween,
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
           DropdownButton<int>(
             value: _currentPage,
-            dropdownColor:
-                const Color(0xFF332C27),
+            dropdownColor: const Color(0xFF332C27),
             underline: const SizedBox(),
             style: const TextStyle(
               color: Colors.white,
@@ -541,26 +518,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
               }
             },
           ),
-
           TextButton.icon(
             onPressed: () {
               setState(() {
-                _isRightToLeft =
-                    !_isRightToLeft;
+                _isRightToLeft = !_isRightToLeft;
               });
             },
-
             icon: Icon(
-              _isRightToLeft
-                  ? Icons.arrow_back
-                  : Icons.arrow_forward,
+              _isRightToLeft ? Icons.arrow_back : Icons.arrow_forward,
               color: Colors.white,
             ),
-
             label: Text(
-              _isRightToLeft
-                  ? '← 右開き'
-                  : '左開き →',
+              _isRightToLeft ? '← 右開き' : '左開き →',
               style: const TextStyle(
                 color: Colors.white,
                 fontSize: 16,
@@ -577,11 +546,8 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   // ============================================================
 
   Widget _buildReaderArea() {
-    final underPage =
-        _underPageNumber();
-
-    final topPage =
-        _currentPage;
+    final underPage = _underPageNumber();
+    final topPage = _currentPage;
 
     return FutureBuilder<List<ui.Image?>>(
       future: Future.wait([
@@ -598,14 +564,9 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
           );
         }
 
-        final images =
-            snapshot.data!;
-
-        final underImage =
-            images[0];
-
-        final topImage =
-            images[1];
+        final images = snapshot.data!;
+        final underImage = images[0];
+        final topImage = images[1];
 
         if (topImage == null) {
           return const Center(
@@ -621,8 +582,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
             underPage: underImage,
             progress: _progress,
             isNextPage: _isNextPage,
-            isRightToLeft:
-                _isRightToLeft,
+            isRightToLeft: _isRightToLeft,
           ),
           size: Size.infinite,
         );
@@ -637,23 +597,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
   Widget _buildBottomBar() {
     return Container(
       color: const Color(0xFF2A231E),
-      padding:
-          const EdgeInsets.symmetric(
+      padding: const EdgeInsets.symmetric(
         horizontal: 18,
         vertical: 8,
       ),
       child: Slider(
         value: _currentPage.toDouble(),
         min: 1,
-        max:
-            math.max(
-              1,
-              _totalPages.toDouble(),
-            ),
-        divisions:
-            _totalPages > 1
-                ? _totalPages - 1
-                : 1,
+        max: math.max(
+          1,
+          _totalPages.toDouble(),
+        ),
+        divisions: _totalPages > 1 ? _totalPages - 1 : 1,
         onChanged: (value) {
           _goToPage(
             value.round(),
@@ -668,8 +623,7 @@ class _PdfReaderScreenState extends State<PdfReaderScreen>
 // ページカール・ペインター
 // ============================================================================
 
-class PageCurlPainter
-    extends CustomPainter {
+class PageCurlPainter extends CustomPainter {
   final ui.Image currentPage;
   final ui.Image? underPage;
 
@@ -698,13 +652,10 @@ class PageCurlPainter
     // 背景
     // ----------------------------------------------------------
 
-    final bgPaint = Paint()
-      ..color =
-          const Color(0xFFD0B59D);
+    final bgPaint = Paint()..color = const Color(0xFFD0B59D);
 
     canvas.drawRect(
-      Offset.zero &
-          size,
+      Offset.zero & size,
       bgPaint,
     );
 
@@ -754,15 +705,12 @@ class PageCurlPainter
     ui.Image image,
     Size size,
   ) {
-    final dst =
-        _fitRect(
+    final dst = _fitRect(
       image,
       size,
     );
 
-    final paint = Paint()
-      ..filterQuality =
-          FilterQuality.medium;
+    final paint = Paint()..filterQuality = FilterQuality.medium;
 
     canvas.drawImageRect(
       image,
@@ -778,6 +726,32 @@ class PageCurlPainter
   }
 
   // ========================================================================
+  // 画像アスペクト比に合わせたRect計算
+  // ========================================================================
+
+  Rect _fitRect(ui.Image image, Size size) {
+    final imgWidth = image.width.toDouble();
+    final imgHeight = image.height.toDouble();
+    final imgRatio = imgWidth / imgHeight;
+    final screenRatio = size.width / size.height;
+
+    double dstWidth, dstHeight;
+
+    if (imgRatio > screenRatio) {
+      dstWidth = size.width;
+      dstHeight = size.width / imgRatio;
+    } else {
+      dstHeight = size.height;
+      dstWidth = size.height * imgRatio;
+    }
+
+    final dx = (size.width - dstWidth) / 2;
+    final dy = (size.height - dstHeight) / 2;
+
+    return Rect.fromLTWH(dx, dy, dstWidth, dstHeight);
+  }
+
+  // ========================================================================
   // ページをカールさせる
   // ========================================================================
 
@@ -786,8 +760,7 @@ class PageCurlPainter
     ui.Image image,
     Size size,
   ) {
-    final pageRect =
-        _fitRect(
+    final pageRect = _fitRect(
       image,
       size,
     );
@@ -799,550 +772,96 @@ class PageCurlPainter
     );
 
     // ページ座標
-    final left =
-        pageRect.left;
+    final left = pageRect.left;
+    final top = pageRect.top;
+    final width = pageRect.width;
+    final height = pageRect.height;
 
-    final top =
-        pageRect.top;
-
-    final width =
-        pageRect.width;
-
-    final height =
-        pageRect.height;
-
-    // ----------------------------------------------------------
     // めくり方向
-    // ----------------------------------------------------------
-
-    final nextDirection =
-        isRightToLeft
-            ? isNextPage
-            : !isNextPage;
-
-    // true:
-    // ページの右端から左へ
-    //
-    // false:
-    // ページの左端から右へ
-
-    // ----------------------------------------------------------
-    // 平らな部分の終点
-    // ----------------------------------------------------------
-
-    final flatWidth =
-        width * (1.0 - progress);
-
-    final foldX = nextDirection
-        ? left + flatWidth
-        : left + width - flatWidth;
-
-    // ----------------------------------------------------------
-    // メッシュ
-    // ----------------------------------------------------------
-
-    final positions =
-        <Offset>[];
-
-    final textures =
-        <Offset>[];
-
-    final colors =
-        <Color>[];
-
-    final indices =
-        <int>[];
-
-    final sourceWidth =
-        image.width.toDouble();
-
-    final sourceHeight =
-        image.height.toDouble();
+    final nextDirection = isRightToLeft ? isNextPage : !isNextPage;
 
     // カール部分の幅
-    final curlWidth =
-        width * progress;
+    final curlWidth = width * progress;
+    final safeCurlWidth = math.max(1.0, curlWidth);
 
-    final safeCurlWidth =
-        math.max(
-          1.0,
-          curlWidth,
-        );
+    // 円筒の半径と最大角度
+    final maxAngle = math.pi * progress;
+    final radius = safeCurlWidth / math.max(2.0, maxAngle);
 
-    // 最大カール角
-    //
-    // 0 → 平ら
-    // 1 → 約180度
-    //
-    final maxAngle =
-        math.pi *
-        progress;
+    final positions = <Offset>[];
+    final textures = <Offset>[];
+    final colors = <Color>[];
+    final indices = <int>[];
 
-    // 円筒の半径
-    final radius =
-        safeCurlWidth /
-            math.max(
-              2.0,
-              maxAngle,
-            );
+    final sourceWidth = image.width.toDouble();
+    final sourceHeight = image.height.toDouble();
 
-    // ----------------------------------------------------------
-    // メッシュ生成
-    // ----------------------------------------------------------
+    // メッシュ座標生成
+    for (int y = 0; y <= rows; y++) {
+      final v = y / rows;
+      final py = top + height * v;
 
-    for (int y = 0;
-        y <= rows;
-        y++) {
-      final v =
-          y / rows;
+      for (int x = 0; x <= columns; x++) {
+        final u = x / columns;
 
-      final py =
-          top + height * v;
-
-      for (int x = 0;
-          x <= columns;
-          x++) {
-        final u =
-            x / columns;
-
-        final sourceX =
-            sourceWidth * u;
-
-        final sourceY =
-            sourceHeight * v;
+        final sourceX = sourceWidth * u;
+        final sourceY = sourceHeight * v;
 
         double destX;
-        double destY;
-
+        double destY = py;
         double shade;
 
-        // ======================================================
-        // 次ページへ
-        // ======================================================
-
         if (nextDirection) {
-          final curlStart =
-              1.0 - progress;
+          final curlStart = 1.0 - progress;
 
           if (u <= curlStart) {
-            // -------------------------------
-            // 平らなページ
-            // -------------------------------
-
-            final flatU =
-                curlStart <= 0
-                    ? 0
-                    : u / curlStart;
-
-            destX =
-                left +
-                flatWidth *
-                    flatU;
-
-            destY =
-                py;
-
+            // 平らな部分
+            destX = left + width * u;
             shade = 1.0;
           } else {
-            // -------------------------------
             // カール部分
-            // -------------------------------
+            final localU = (u - curlStart) / math.max(0.0001, progress);
+            final angle = localU * maxAngle;
 
-            final t =
-                (u - curlStart) /
-                    math.max(
-                      0.0001,
-                      progress,
-                    );
-
-            final angle =
-                t * maxAngle;
-
-            // 円筒状に曲げる
-            destX =
-                foldX -
-                radius *
-                    (1.0 -
-                        math.cos(
-                          angle,
-                        ));
-
-            // 少しだけ紙が浮く
-            final lift =
-                math.sin(angle) *
-                    math.sin(
-                      math.pi * v,
-                    ) *
-                    math.min(
-                      18.0,
-                      height * 0.025,
-                    );
-
-            destY =
-                py + lift;
-
-            // 曲面の明暗
-            shade =
-                0.70 +
-                    0.30 *
-                        math.cos(
-                          angle,
-                        );
+            final foldX = left + width * curlStart;
+            destX = foldX + math.sin(angle) * radius;
+            shade = math.max(0.3, math.cos(angle * 0.5));
           }
-        }
-
-        // ======================================================
-        // 前ページへ
-        // ======================================================
-
-        else {
-          final curlStart =
-              progress;
+        } else {
+          final curlStart = progress;
 
           if (u >= curlStart) {
-            // -------------------------------
-            // 平らなページ
-            // -------------------------------
-
-            final flatU =
-                (u - curlStart) /
-                    math.max(
-                      0.0001,
-                      1.0 -
-                          curlStart,
-                    );
-
-            destX =
-                left +
-                width *
-                    progress +
-                width *
-                    (1.0 -
-                        progress) *
-                    flatU;
-
-            destY =
-                py;
-
+            // 平らな部分
+            destX = left + width * u;
             shade = 1.0;
           } else {
-            // -------------------------------
-            // 左からカール
-            // -------------------------------
+            // カール部分
+            final localU = (curlStart - u) / math.max(0.0001, progress);
+            final angle = localU * maxAngle;
 
-            final t =
-                u /
-                    math.max(
-                      0.0001,
-                      progress,
-                    );
-
-            final angle =
-                t * maxAngle;
-
-            final fold =
-                left +
-                    width -
-                    flatWidth;
-
-            destX =
-                fold +
-                    radius *
-                        (1.0 -
-                            math.cos(
-                              angle,
-                            ));
-
-            final lift =
-                math.sin(angle) *
-                    math.sin(
-                      math.pi * v,
-                    ) *
-                    math.min(
-                      18.0,
-                      height * 0.025,
-                    );
-
-            destY =
-                py + lift;
-
-            shade =
-                0.70 +
-                    0.30 *
-                        math.cos(
-                          angle,
-                        );
+            final foldX = left + width * curlStart;
+            destX = foldX - math.sin(angle) * radius;
+            shade = math.max(0.3, math.cos(angle * 0.5));
           }
         }
 
-        // ------------------------------------------------------
-        // 少しだけ立体感
-        // ------------------------------------------------------
+        positions.add(Offset(destX, destY));
+        textures.add(Offset(sourceX, sourceY));
 
-        final normalizedShade =
-            shade.clamp(
-              0.35,
-              1.0,
-            );
-
-        positions.add(
-          Offset(
-            destX,
-            destY,
-          ),
-        );
-
-        textures.add(
-          Offset(
-            sourceX,
-            sourceY,
-          ),
-        );
-
-        colors.add(
-          Color.fromRGBO(
-            255,
-            255,
-            255,
-            normalizedShade,
-          ),
-        );
+        final c = (255 * shade).round().clamp(0, 255);
+        colors.add(Color.fromARGB(255, c, c, c));
       }
     }
 
-    // ----------------------------------------------------------
-    // 三角形
-    // ----------------------------------------------------------
+    // インデックス生成（ポリゴンメッシュ）
+    for (int y = 0; y < rows; y++) {
+      for (int x = 0; x < columns; x++) {
+        final i1 = y * (columns + 1) + x;
+        final i2 = i1 + 1;
+        final i3 = (y + 1) * (columns + 1) + x;
+        final i4 = i3 + 1;
 
-    final stride =
-        columns + 1;
-
-    for (int y = 0;
-        y < rows;
-        y++) {
-      for (int x = 0;
-          x < columns;
-          x++) {
-        final a =
-            y * stride + x;
-
-        final b =
-            a + 1;
-
-        final c =
-            a + stride;
-
-        final d =
-            c + 1;
-
-        indices.add(a);
-        indices.add(c);
-        indices.add(b);
-
-        indices.add(b);
-        indices.add(c);
-        indices.add(d);
+        indices.addAll([i1, i2, i3]);
+        indices.addAll([i2, i4, i3]);
       }
-    }
-
-    // ----------------------------------------------------------
-    // テクスチャ付きメッシュ
-    // ----------------------------------------------------------
-
-    final vertices =
-        ui.Vertices(
-      ui.VertexMode.triangles,
-      positions,
-      textureCoordinates:
-          textures,
-      colors: colors,
-      indices: indices,
-    );
-
-    final paint = Paint()
-      ..shader = ui.ImageShader(
-        image,
-        TileMode.clamp,
-        TileMode.clamp,
-        Float64List.fromList([
-          1, 0, 0, 0,
-          0, 1, 0, 0,
-          0, 0, 1, 0,
-          0, 0, 0, 1,
-        ]),
-        filterQuality:
-            FilterQuality.medium,
-      );
-
-    canvas.drawVertices(
-      vertices,
-      BlendMode.modulate,
-      paint,
-    );
-
-    vertices.dispose();
-
-    canvas.restore();
-
-    // ----------------------------------------------------------
-    // カールの影
-    // ----------------------------------------------------------
-
-    _drawCurlShadow(
-      canvas,
-      size,
-      pageRect,
-    );
-  }
-
-  // ========================================================================
-  // カールの影
-  // ========================================================================
-
-  void _drawCurlShadow(
-    Canvas canvas,
-    Size size,
-    Rect pageRect,
-  ) {
-    if (progress <= 0) {
-      return;
-    }
-
-    final nextDirection =
-        isRightToLeft
-            ? isNextPage
-            : !isNextPage;
-
-    final shadowWidth =
-        math.max(
-          10.0,
-          pageRect.width *
-              0.035 *
-              progress,
-        );
-
-    final foldX = nextDirection
-        ? pageRect.left +
-            pageRect.width *
-                (1.0 - progress)
-        : pageRect.left +
-            pageRect.width *
-                progress;
-
-    final rect =
-        nextDirection
-            ? Rect.fromLTWH(
-                foldX -
-                    shadowWidth,
-                pageRect.top,
-                shadowWidth,
-                pageRect.height,
-              )
-            : Rect.fromLTWH(
-                foldX,
-                pageRect.top,
-                shadowWidth,
-                pageRect.height,
-              );
-
-    final gradient =
-        nextDirection
-            ? LinearGradient(
-                begin:
-                    Alignment.centerLeft,
-                end:
-                    Alignment.centerRight,
-                colors: [
-                  Colors.black.withOpacity(
-                    0.28 *
-                        progress,
-                  ),
-                  Colors.transparent,
-                ],
-              )
-            : LinearGradient(
-                begin:
-                    Alignment.centerRight,
-                end:
-                    Alignment.centerLeft,
-                colors: [
-                  Colors.black.withOpacity(
-                    0.28 *
-                        progress,
-                  ),
-                  Colors.transparent,
-                ],
-              );
-
-    final paint =
-        Paint()
-          ..shader =
-              gradient.createShader(
-            rect,
-          );
-
-    canvas.drawRect(
-      rect,
-      paint,
-    );
-  }
-
-  // ========================================================================
-  // 画像を画面内に収める
-  // ========================================================================
-
-  Rect _fitRect(
-    ui.Image image,
-    Size size,
-  ) {
-    final imageRatio =
-        image.width /
-            image.height;
-
-    final screenRatio =
-        size.width /
-            size.height;
-
-    double width;
-    double height;
-
-    if (imageRatio > screenRatio) {
-      width = size.width;
-      height =
-          width / imageRatio;
-    } else {
-      height = size.height;
-      width =
-          height * imageRatio;
-    }
-
-    final left =
-        (size.width - width) / 2;
-
-    final top =
-        (size.height - height) / 2;
-
-    return Rect.fromLTWH(
-      left,
-      top,
-      width,
-      height,
-    );
-  }
-
-  @override
-  bool shouldRepaint(
-    covariant PageCurlPainter oldDelegate,
-  ) {
-    return oldDelegate.currentPage !=
-            currentPage ||
-        oldDelegate.underPage !=
-            underPage ||
-        oldDelegate.progress !=
-            progress ||
-        oldDelegate.isNextPage !=
-            isNextPage ||
-        oldDelegate.isRightToLeft !=
-            isRightToLeft;
-  }
-}
+ 

@@ -1,6 +1,0 @@
-dependencies:
-  flutter:
-    sdk: flutter
-  pdfx: ^2.6.0
-  http: ^1.2.0
-  path_provider: ^2.1.2

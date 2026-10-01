@@ -1,22 +1,26 @@
-import 'dart:io';
+
+import 'dart:async';
 import 'dart:math' as math;
+import 'dart:typed_data';
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart';
 
 void main() {
-  runApp(const MyApp());
+  runApp(const PageCurlReaderApp());
 }
 
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+class PageCurlReaderApp extends StatelessWidget {
+  const PageCurlReaderApp({super.key});
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PDF Reader',
       debugShowCheckedModeBanner: false,
+      title: 'Page Curl Reader',
       theme: ThemeData.dark(),
       home: const PdfReaderScreen(),
     );
@@ -30,32 +34,45 @@ class PdfReaderScreen extends StatefulWidget {
   State<PdfReaderScreen> createState() => _PdfReaderScreenState();
 }
 
-class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProviderStateMixin {
+class _PdfReaderScreenState extends State<PdfReaderScreen>
+    with SingleTickerProviderStateMixin {
   PdfDocument? _pdfDocument;
+
   bool _isLoading = true;
   int _totalPages = 0;
   int _currentPage = 1;
-  bool _isRightToLeft = true; // デフォルト右開き
 
-  final Map<int, ImageProvider> _pageCache = {};
+  // true = 右開き
+  bool _isRightToLeft = true;
 
-  late AnimationController _animController;
-  double _dragProgress = 0.0; // 0.0 ~ 1.0
-  bool _isDragging = false;
+  // ページ画像キャッシュ
+  final Map<int, ui.Image> _pageCache = {};
+
+  // ページめくり
+  late AnimationController _controller;
+
+  double _progress = 0.0;
+
+  bool _dragging = false;
   bool _isNextPage = true;
 
+  // サンプルPDF
   final String _samplePdfUrl =
-      'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi09.pdf';
+      'https://raw.githubusercontent.com/mozilla/pdf.js/'
+      'ba2edeae/web/compressed.tracemonkey-pldi09.pdf';
 
   @override
   void initState() {
     super.initState();
-    _animController = AnimationController(
+
+    _controller = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 200),
+      duration: const Duration(milliseconds: 420),
     )..addListener(() {
+        if (!mounted) return;
+
         setState(() {
-          _dragProgress = _animController.value;
+          _progress = _controller.value;
         });
       });
 
@@ -64,338 +81,1268 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> with SingleTickerProv
 
   @override
   void dispose() {
-    _animController.dispose();
+    _controller.dispose();
+
+    for (final image in _pageCache.values) {
+      image.dispose();
+    }
+
+    _pdfDocument?.close();
+
     super.dispose();
   }
+
+  // ============================================================
+  // PDF読み込み
+  // ============================================================
 
   Future<void> _loadPdf() async {
     try {
       final response = await http.get(Uri.parse(_samplePdfUrl));
+
+      if (response.statusCode != 200) {
+        throw Exception('PDF download failed');
+      }
+
       final dir = await getTemporaryDirectory();
-      final file = File('${dir.path}/sample.pdf');
+
+      final file = File(
+        '${dir.path}/page_curl_sample.pdf',
+      );
+
       await file.writeAsBytes(response.bodyBytes);
 
-      final doc = await PdfDocument.openFile(file.path);
+      final document = await PdfDocument.openFile(file.path);
+
+      if (!mounted) return;
+
       setState(() {
-        _pdfDocument = doc;
-        _totalPages = doc.pagesCount;
+        _pdfDocument = document;
+        _totalPages = document.pagesCount;
         _isLoading = false;
       });
+
+      // 最初のページを先読み
+      await _loadPageImage(1);
+
+      if (_totalPages >= 2) {
+        await _loadPageImage(2);
+      }
+
+      if (mounted) {
+        setState(() {});
+      }
     } catch (e) {
-      debugPrint('Error loading PDF: $e');
+      debugPrint('PDF error: $e');
+
+      if (!mounted) return;
+
       setState(() {
         _isLoading = false;
       });
     }
   }
 
-  Future<ImageProvider> _getPageImage(int pageNumber) async {
+  // ============================================================
+  // PDFページ → ui.Image
+  // ============================================================
+
+  Future<ui.Image> _loadPageImage(int pageNumber) async {
+    final cached = _pageCache[pageNumber];
+
+    if (cached != null) {
+      return cached;
+    }
+
+    final document = _pdfDocument;
+
+    if (document == null) {
+      throw Exception('PDF not loaded');
+    }
+
     if (pageNumber < 1 || pageNumber > _totalPages) {
-      return const MemoryImage(transparentPixel);
-    }
-    if (_pageCache.containsKey(pageNumber)) {
-      return _pageCache[pageNumber]!;
+      throw Exception('Invalid page');
     }
 
-    if (_pdfDocument == null) throw Exception("Document not loaded");
+    final page = await document.getPage(pageNumber);
 
-    final page = await _pdfDocument!.getPage(pageNumber);
-    final pageImage = await page.render(
-      width: page.width * 2,
-      height: page.height * 2,
-      format: PdfPageImageFormat.jpeg,
+    try {
+      // 解像度を高めにレンダリング
+      final image = await page.render(
+        width: page.width * 2.0,
+        height: page.height * 2.0,
+        format: PdfPageImageFormat.png,
+      );
+
+      if (image == null) {
+        throw Exception('Page rendering failed');
+      }
+
+      final codec = await ui.instantiateImageCodec(
+        image.bytes,
+      );
+
+      final frame = await codec.getNextFrame();
+
+      codec.dispose();
+
+      final result = frame.image;
+
+      _pageCache[pageNumber] = result;
+
+      return result;
+    } finally {
+      await page.close();
+    }
+  }
+
+  Future<ui.Image?> _tryLoadPage(int pageNumber) async {
+    if (pageNumber < 1 || pageNumber > _totalPages) {
+      return null;
+    }
+
+    try {
+      return await _loadPageImage(pageNumber);
+    } catch (e) {
+      debugPrint('Page $pageNumber error: $e');
+      return null;
+    }
+  }
+
+  // ============================================================
+  // ページ番号
+  // ============================================================
+
+  int _underPageNumber() {
+    if (_isNextPage) {
+      return math.min(
+        _currentPage + 1,
+        _totalPages,
+      );
+    }
+
+    return math.max(
+      _currentPage - 1,
+      1,
     );
-    await page.close();
-
-    final provider = MemoryImage(pageImage!.bytes);
-    _pageCache[pageNumber] = provider;
-    return provider;
   }
 
-  static const transparentPixel = <int>[
-    0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A, 0x00, 0x00, 0x00, 0x0D, 0x49, 0x48, 0x44, 0x52,
-    0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x06, 0x00, 0x00, 0x00, 0x1F, 0x15, 0xC4,
-    0x89, 0x00, 0x00, 0x00, 0x0A, 0x49, 0x44, 0x41, 0x54, 0x78, 0x9C, 0x63, 0x00, 0x01, 0x00, 0x00,
-    0x05, 0x00, 0x01, 0x0D, 0x0A, 0x2D, 0xB4, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4E, 0x44, 0xAE,
-    0x42, 0x60, 0x82
-  ];
+  // ============================================================
+  // ドラッグ開始
+  // ============================================================
 
-  void _onHorizontalDragStart(DragStartDetails details, double screenWidth) {
-    if (_animController.isAnimating) return;
-
-    final dx = details.localPosition.dx;
-
-    if (_isRightToLeft) {
-      if (dx > screenWidth * 0.3) {
-        if (_currentPage >= _totalPages) return;
-        _isNextPage = true;
-      } else {
-        if (_currentPage <= 1) return;
-        _isNextPage = false;
-      }
-    } else {
-      if (dx < screenWidth * 0.7) {
-        if (_currentPage >= _totalPages) return;
-        _isNextPage = true;
-      } else {
-        if (_currentPage <= 1) return;
-        _isNextPage = false;
-      }
+  void _onDragStart(
+    DragStartDetails details,
+    double width,
+  ) {
+    if (_controller.isAnimating) {
+      return;
     }
 
+    final x = details.localPosition.dx;
+
+    bool next;
+
+    if (_isRightToLeft) {
+      // 右側から左へ = 次ページ
+      next = x > width * 0.35;
+    } else {
+      // 左側から右へ = 次ページ
+      next = x < width * 0.65;
+    }
+
+    if (next && _currentPage >= _totalPages) {
+      return;
+    }
+
+    if (!next && _currentPage <= 1) {
+      return;
+    }
+
+    _isNextPage = next;
+
     setState(() {
-      _isDragging = true;
-      _dragProgress = 0.0;
+      _dragging = true;
+      _progress = 0.0;
     });
   }
 
-  void _onHorizontalDragUpdate(DragUpdateDetails details, double screenWidth) {
-    if (!_isDragging) return;
+  // ============================================================
+  // ドラッグ中
+  // ============================================================
 
-    double delta = details.primaryDelta ?? 0;
-    double factor = 0;
+  void _onDragUpdate(
+    DragUpdateDetails details,
+    double width,
+  ) {
+    if (!_dragging) {
+      return;
+    }
+
+    final delta = details.primaryDelta ?? 0;
+
+    double amount;
 
     if (_isRightToLeft) {
-      factor = _isNextPage ? -delta : delta;
+      amount = _isNextPage ? -delta : delta;
     } else {
-      factor = _isNextPage ? delta : -delta;
+      amount = _isNextPage ? delta : -delta;
     }
 
     setState(() {
-      _dragProgress += factor / screenWidth;
-      _dragProgress = _dragProgress.clamp(0.0, 1.0);
+      _progress += amount / width;
+
+      _progress = _progress.clamp(
+        0.0,
+        1.0,
+      );
     });
   }
 
-  void _onHorizontalDragEnd(DragEndDetails details) {
-    if (!_isDragging) return;
-    _isDragging = false;
+  // ============================================================
+  // 指を離した
+  // ============================================================
 
-    if (_dragProgress > 0.15) {
-      _animController.forward(from: _dragProgress).then((_) {
-        setState(() {
-          if (_isNextPage) {
-            _currentPage++;
-          } else {
-            _currentPage--;
-          }
-          _dragProgress = 0.0;
-        });
-      });
+  Future<void> _onDragEnd(
+    DragEndDetails details,
+  ) async {
+    if (!_dragging) {
+      return;
+    }
+
+    _dragging = false;
+
+    final velocity = details.primaryVelocity ?? 0;
+
+    bool complete = _progress > 0.22;
+
+    // 強くスワイプした場合
+    if (_isRightToLeft) {
+      if (_isNextPage && velocity < -450) {
+        complete = true;
+      }
+
+      if (!_isNextPage && velocity > 450) {
+        complete = true;
+      }
     } else {
-      _animController.reverse(from: _dragProgress).then((_) {
-        setState(() {
-          _dragProgress = 0.0;
-        });
-      });
+      if (_isNextPage && velocity > 450) {
+        complete = true;
+      }
+
+      if (!_isNextPage && velocity < -450) {
+        complete = true;
+      }
+    }
+
+    if (complete) {
+      await _finishPageTurn();
+    } else {
+      await _cancelPageTurn();
     }
   }
 
-  void _goToPage(int page) {
-    if (page < 1 || page > _totalPages || page == _currentPage) return;
+  // ============================================================
+  // ページを最後までめくる
+  // ============================================================
+
+  Future<void> _finishPageTurn() async {
+    final start = _progress;
+
+    await _controller.animateTo(
+      1.0,
+      duration: Duration(
+        milliseconds:
+            math.max(
+              120,
+              ((1.0 - start) * 360).round(),
+            ),
+      ),
+      curve: Curves.easeOutCubic,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      if (_isNextPage) {
+        _currentPage++;
+      } else {
+        _currentPage--;
+      }
+
+      _progress = 0.0;
+    });
+
+    _controller.value = 0.0;
+
+    // 次のページを先読み
+    unawaited(
+      _tryLoadPage(_currentPage + 1),
+    );
+
+    unawaited(
+      _tryLoadPage(_currentPage - 1),
+    );
+  }
+
+  // ============================================================
+  // ページを元に戻す
+  // ============================================================
+
+  Future<void> _cancelPageTurn() async {
+    final start = _progress;
+
+    await _controller.animateTo(
+      0.0,
+      duration: Duration(
+        milliseconds:
+            math.max(
+              100,
+              (start * 260).round(),
+            ),
+      ),
+      curve: Curves.easeOutCubic,
+    );
+
+    if (!mounted) return;
+
+    setState(() {
+      _progress = 0.0;
+    });
+  }
+
+  // ============================================================
+  // 指定ページ
+  // ============================================================
+
+  Future<void> _goToPage(int page) async {
+    if (page < 1 ||
+        page > _totalPages ||
+        page == _currentPage) {
+      return;
+    }
+
     setState(() {
       _currentPage = page;
-      _dragProgress = 0.0;
+      _progress = 0.0;
     });
+
+    await _tryLoadPage(page);
+    await _tryLoadPage(page + 1);
+    await _tryLoadPage(page - 1);
+
+    if (mounted) {
+      setState(() {});
+    }
   }
+
+  // ============================================================
+  // UI
+  // ============================================================
 
   @override
   Widget build(BuildContext context) {
-    final screenWidth = MediaQuery.of(context).size.width;
+    final screenWidth =
+        MediaQuery.of(context).size.width;
 
     return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
+      backgroundColor:
+          const Color(0xFF302A25),
+
       body: _isLoading
-          ? const Center(child: CircularProgressIndicator())
+          ? const Center(
+              child: CircularProgressIndicator(),
+            )
           : _pdfDocument == null
-              ? const Center(child: Text('PDFの読み込みに失敗しました'))
+              ? const Center(
+                  child: Text(
+                    'PDFの読み込みに失敗しました',
+                  ),
+                )
               : SafeArea(
                   child: Column(
                     children: [
-                      // 上部コントロール
-                      Container(
-                        color: Colors.black87,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            DropdownButton<int>(
-                              value: _currentPage,
-                              dropdownColor: Colors.grey[900],
-                              style: const TextStyle(color: Colors.white, fontSize: 16),
-                              items: List.generate(_totalPages, (index) {
-                                return DropdownMenuItem(
-                                  value: index + 1,
-                                  child: Text('${index + 1} / $_totalPages ページ'),
-                                );
-                              }),
-                              onChanged: (value) {
-                                if (value != null) _goToPage(value);
-                              },
-                            ),
-                            TextButton.icon(
-                              onPressed: () {
-                                setState(() {
-                                  _isRightToLeft = !_isRightToLeft;
-                                });
-                              },
-                              icon: Icon(
-                                _isRightToLeft ? Icons.arrow_back : Icons.arrow_forward,
-                                color: Colors.white,
-                              ),
-                              label: Text(
-                                _isRightToLeft ? '← 右開き' : '左開き →',
-                                style: const TextStyle(color: Colors.white, fontSize: 16),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
+                      _buildTopBar(),
 
-                      // メイン閲覧エリア（シリンダーロールめくり）
                       Expanded(
                         child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onHorizontalDragStart: (details) => _onHorizontalDragStart(details, screenWidth),
-                          onHorizontalDragUpdate: (details) => _onHorizontalDragUpdate(details, screenWidth),
-                          onHorizontalDragEnd: _onHorizontalDragEnd,
-                          child: Stack(
-                            fit: StackFit.expand,
-                            children: [
-                              // 1. 次のページ（下層）
-                              _buildPageView(_getUnderPageNumber()),
+                          behavior:
+                              HitTestBehavior.opaque,
 
-                              // 2. めくられるページ（上層：完全垂直直線カット＋円筒ロール影）
-                              if (_dragProgress > 0.0)
-                                _buildVerticalRollerEffect(_getTopPageNumber(), screenWidth),
-                            ],
+                          onHorizontalDragStart:
+                              (details) =>
+                                  _onDragStart(
+                            details,
+                            screenWidth,
                           ),
+
+                          onHorizontalDragUpdate:
+                              (details) =>
+                                  _onDragUpdate(
+                            details,
+                            screenWidth,
+                          ),
+
+                          onHorizontalDragEnd:
+                              _onDragEnd,
+
+                          child:
+                              _buildReaderArea(),
                         ),
                       ),
 
-                      // 下部スライダー
-                      Container(
-                        color: Colors.black87,
-                        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                        child: Slider(
-                          value: _currentPage.toDouble(),
-                          min: 1,
-                          max: _totalPages.toDouble(),
-                          divisions: _totalPages > 1 ? _totalPages - 1 : 1,
-                          onChanged: (value) => _goToPage(value.toInt()),
-                        ),
-                      ),
+                      _buildBottomBar(),
                     ],
                   ),
                 ),
     );
   }
 
-  int _getTopPageNumber() => _currentPage;
+  // ============================================================
+  // 上部バー
+  // ============================================================
 
-  int _getUnderPageNumber() {
-    if (_isNextPage) {
-      return math.min(_currentPage + 1, _totalPages);
-    } else {
-      return math.max(_currentPage - 1, 1);
-    }
+  Widget _buildTopBar() {
+    return Container(
+      height: 64,
+      color: const Color(0xFF2A231E),
+      padding: const EdgeInsets.symmetric(
+        horizontal: 16,
+      ),
+      child: Row(
+        mainAxisAlignment:
+            MainAxisAlignment.spaceBetween,
+        children: [
+          DropdownButton<int>(
+            value: _currentPage,
+            dropdownColor:
+                const Color(0xFF332C27),
+            underline: const SizedBox(),
+            style: const TextStyle(
+              color: Colors.white,
+              fontSize: 16,
+            ),
+            items: List.generate(
+              _totalPages,
+              (index) {
+                final page = index + 1;
+
+                return DropdownMenuItem<int>(
+                  value: page,
+                  child: Text(
+                    '$page / $_totalPages ページ',
+                  ),
+                );
+              },
+            ),
+            onChanged: (value) {
+              if (value != null) {
+                _goToPage(value);
+              }
+            },
+          ),
+
+          TextButton.icon(
+            onPressed: () {
+              setState(() {
+                _isRightToLeft =
+                    !_isRightToLeft;
+              });
+            },
+
+            icon: Icon(
+              _isRightToLeft
+                  ? Icons.arrow_back
+                  : Icons.arrow_forward,
+              color: Colors.white,
+            ),
+
+            label: Text(
+              _isRightToLeft
+                  ? '← 右開き'
+                  : '左開き →',
+              style: const TextStyle(
+                color: Colors.white,
+                fontSize: 16,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
-  Widget _buildPageView(int pageNum) {
-    return FutureBuilder<ImageProvider>(
-      future: _getPageImage(pageNum),
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.done && snapshot.hasData) {
-          return SizedBox.expand(
-            child: Image(
-              image: snapshot.data!,
-              fit: BoxFit.contain,
+  // ============================================================
+  // 読書エリア
+  // ============================================================
+
+  Widget _buildReaderArea() {
+    final underPage =
+        _underPageNumber();
+
+    final topPage =
+        _currentPage;
+
+    return FutureBuilder<List<ui.Image?>>(
+      future: Future.wait([
+        _tryLoadPage(underPage),
+        _tryLoadPage(topPage),
+      ]),
+      builder: (
+        context,
+        snapshot,
+      ) {
+        if (!snapshot.hasData) {
+          return const Center(
+            child: CircularProgressIndicator(),
+          );
+        }
+
+        final images =
+            snapshot.data!;
+
+        final underImage =
+            images[0];
+
+        final topImage =
+            images[1];
+
+        if (topImage == null) {
+          return const Center(
+            child: Text(
+              'ページを表示できません',
             ),
           );
         }
-        return Container(color: Colors.white);
+
+        return CustomPaint(
+          painter: PageCurlPainter(
+            currentPage: topImage,
+            underPage: underImage,
+            progress: _progress,
+            isNextPage: _isNextPage,
+            isRightToLeft:
+                _isRightToLeft,
+          ),
+          size: Size.infinite,
+        );
       },
     );
   }
 
-  // 完全垂直なシリンダー（ロール）エフェクトの自作ロジック
-  Widget _buildVerticalRollerEffect(int pageNum, double screenWidth) {
-    final isFromRight = (_isRightToLeft && _isNextPage) || (!_isRightToLeft && !_isNextPage);
-    final progressWidth = screenWidth * _dragProgress;
-    final remainWidth = screenWidth - progressWidth;
+  // ============================================================
+  // 下部スライダー
+  // ============================================================
 
-    final rollWidth = math.min(progressWidth, 50.0);
-
-    return Stack(
-      children: [
-        // A. 表面（垂直切り抜き）
-        ClipRect(
-          clipper: VerticalStraightClipper(remainWidth: remainWidth, isFromRight: isFromRight),
-          child: _buildPageView(pageNum),
-        ),
-
-        // B. 垂直境界線の影（180度まっすぐ）
-        Positioned(
-          top: 0,
-          bottom: 0,
-          left: isFromRight ? remainWidth - 15 : remainWidth,
-          width: 15,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: isFromRight
-                    ? [Colors.transparent, Colors.black.withOpacity(0.4)]
-                    : [Colors.black.withOpacity(0.4), Colors.transparent],
-              ),
+  Widget _buildBottomBar() {
+    return Container(
+      color: const Color(0xFF2A231E),
+      padding:
+          const EdgeInsets.symmetric(
+        horizontal: 18,
+        vertical: 8,
+      ),
+      child: Slider(
+        value: _currentPage.toDouble(),
+        min: 1,
+        max:
+            math.max(
+              1,
+              _totalPages.toDouble(),
             ),
-          ),
-        ),
-
-        // C. 円筒状（ロール）ハイライト/シャドウ
-        Positioned(
-          top: 0,
-          bottom: 0,
-          left: isFromRight ? remainWidth : remainWidth - rollWidth,
-          width: rollWidth,
-          child: Container(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [
-                  Colors.black.withOpacity(0.5),
-                  Colors.white.withOpacity(0.35),
-                  Colors.black.withOpacity(0.2),
-                  Colors.black.withOpacity(0.6),
-                ],
-                stops: const [0.0, 0.25, 0.7, 1.0],
-                begin: isFromRight ? Alignment.centerLeft : Alignment.centerRight,
-                end: isFromRight ? Alignment.centerRight : Alignment.centerLeft,
-              ),
-            ),
-          ),
-        ),
-      ],
+        divisions:
+            _totalPages > 1
+                ? _totalPages - 1
+                : 1,
+        onChanged: (value) {
+          _goToPage(
+            value.round(),
+          );
+        },
+      ),
     );
   }
 }
 
-// 画面上部から下部まで完全に垂直直線でマスクするクリッパー
-class VerticalStraightClipper extends CustomClipper<Rect> {
-  final double remainWidth;
-  final bool isFromRight;
+// ============================================================================
+// ページカール・ペインター
+// ============================================================================
 
-  VerticalStraightClipper({required this.remainWidth, required this.isFromRight});
+class PageCurlPainter
+    extends CustomPainter {
+  final ui.Image currentPage;
+  final ui.Image? underPage;
+
+  final double progress;
+
+  final bool isNextPage;
+  final bool isRightToLeft;
+
+  static const int columns = 36;
+  static const int rows = 10;
+
+  PageCurlPainter({
+    required this.currentPage,
+    required this.underPage,
+    required this.progress,
+    required this.isNextPage,
+    required this.isRightToLeft,
+  });
 
   @override
-  Rect getClip(Size size) {
-    if (isFromRight) {
-      return Rect.fromLTWH(0, 0, remainWidth, size.height);
-    } else {
-      return Rect.fromLTWH(size.width - remainWidth, 0, remainWidth, size.height);
+  void paint(
+    Canvas canvas,
+    Size size,
+  ) {
+    // ----------------------------------------------------------
+    // 背景
+    // ----------------------------------------------------------
+
+    final bgPaint = Paint()
+      ..color =
+          const Color(0xFFD0B59D);
+
+    canvas.drawRect(
+      Offset.zero &
+          size,
+      bgPaint,
+    );
+
+    // ----------------------------------------------------------
+    // 下のページ
+    // ----------------------------------------------------------
+
+    if (underPage != null) {
+      _drawPage(
+        canvas,
+        underPage!,
+        size,
+      );
     }
+
+    // ----------------------------------------------------------
+    // めくり開始前
+    // ----------------------------------------------------------
+
+    if (progress <= 0.0001) {
+      _drawPage(
+        canvas,
+        currentPage,
+        size,
+      );
+
+      return;
+    }
+
+    // ----------------------------------------------------------
+    // 現在ページをカール
+    // ----------------------------------------------------------
+
+    _drawCurlPage(
+      canvas,
+      currentPage,
+      size,
+    );
+  }
+
+  // ========================================================================
+  // 通常ページ
+  // ========================================================================
+
+  void _drawPage(
+    Canvas canvas,
+    ui.Image image,
+    Size size,
+  ) {
+    final dst =
+        _fitRect(
+      image,
+      size,
+    );
+
+    final paint = Paint()
+      ..filterQuality =
+          FilterQuality.medium;
+
+    canvas.drawImageRect(
+      image,
+      Rect.fromLTWH(
+        0,
+        0,
+        image.width.toDouble(),
+        image.height.toDouble(),
+      ),
+      dst,
+      paint,
+    );
+  }
+
+  // ========================================================================
+  // ページをカールさせる
+  // ========================================================================
+
+  void _drawCurlPage(
+    Canvas canvas,
+    ui.Image image,
+    Size size,
+  ) {
+    final pageRect =
+        _fitRect(
+      image,
+      size,
+    );
+
+    canvas.save();
+
+    canvas.clipRect(
+      Offset.zero & size,
+    );
+
+    // ページ座標
+    final left =
+        pageRect.left;
+
+    final top =
+        pageRect.top;
+
+    final width =
+        pageRect.width;
+
+    final height =
+        pageRect.height;
+
+    // ----------------------------------------------------------
+    // めくり方向
+    // ----------------------------------------------------------
+
+    final nextDirection =
+        isRightToLeft
+            ? isNextPage
+            : !isNextPage;
+
+    // true:
+    // ページの右端から左へ
+    //
+    // false:
+    // ページの左端から右へ
+
+    // ----------------------------------------------------------
+    // 平らな部分の終点
+    // ----------------------------------------------------------
+
+    final flatWidth =
+        width * (1.0 - progress);
+
+    final foldX = nextDirection
+        ? left + flatWidth
+        : left + width - flatWidth;
+
+    // ----------------------------------------------------------
+    // メッシュ
+    // ----------------------------------------------------------
+
+    final positions =
+        <Offset>[];
+
+    final textures =
+        <Offset>[];
+
+    final colors =
+        <Color>[];
+
+    final indices =
+        <int>[];
+
+    final sourceWidth =
+        image.width.toDouble();
+
+    final sourceHeight =
+        image.height.toDouble();
+
+    // カール部分の幅
+    final curlWidth =
+        width * progress;
+
+    final safeCurlWidth =
+        math.max(
+          1.0,
+          curlWidth,
+        );
+
+    // 最大カール角
+    //
+    // 0 → 平ら
+    // 1 → 約180度
+    //
+    final maxAngle =
+        math.pi *
+        progress;
+
+    // 円筒の半径
+    final radius =
+        safeCurlWidth /
+            math.max(
+              2.0,
+              maxAngle,
+            );
+
+    // ----------------------------------------------------------
+    // メッシュ生成
+    // ----------------------------------------------------------
+
+    for (int y = 0;
+        y <= rows;
+        y++) {
+      final v =
+          y / rows;
+
+      final py =
+          top + height * v;
+
+      for (int x = 0;
+          x <= columns;
+          x++) {
+        final u =
+            x / columns;
+
+        final sourceX =
+            sourceWidth * u;
+
+        final sourceY =
+            sourceHeight * v;
+
+        double destX;
+        double destY;
+
+        double shade;
+
+        // ======================================================
+        // 次ページへ
+        // ======================================================
+
+        if (nextDirection) {
+          final curlStart =
+              1.0 - progress;
+
+          if (u <= curlStart) {
+            // -------------------------------
+            // 平らなページ
+            // -------------------------------
+
+            final flatU =
+                curlStart <= 0
+                    ? 0
+                    : u / curlStart;
+
+            destX =
+                left +
+                flatWidth *
+                    flatU;
+
+            destY =
+                py;
+
+            shade = 1.0;
+          } else {
+            // -------------------------------
+            // カール部分
+            // -------------------------------
+
+            final t =
+                (u - curlStart) /
+                    math.max(
+                      0.0001,
+                      progress,
+                    );
+
+            final angle =
+                t * maxAngle;
+
+            // 円筒状に曲げる
+            destX =
+                foldX -
+                radius *
+                    (1.0 -
+                        math.cos(
+                          angle,
+                        ));
+
+            // 少しだけ紙が浮く
+            final lift =
+                math.sin(angle) *
+                    math.sin(
+                      math.pi * v,
+                    ) *
+                    math.min(
+                      18.0,
+                      height * 0.025,
+                    );
+
+            destY =
+                py + lift;
+
+            // 曲面の明暗
+            shade =
+                0.70 +
+                    0.30 *
+                        math.cos(
+                          angle,
+                        );
+          }
+        }
+
+        // ======================================================
+        // 前ページへ
+        // ======================================================
+
+        else {
+          final curlStart =
+              progress;
+
+          if (u >= curlStart) {
+            // -------------------------------
+            // 平らなページ
+            // -------------------------------
+
+            final flatU =
+                (u - curlStart) /
+                    math.max(
+                      0.0001,
+                      1.0 -
+                          curlStart,
+                    );
+
+            destX =
+                left +
+                width *
+                    progress +
+                width *
+                    (1.0 -
+                        progress) *
+                    flatU;
+
+            destY =
+                py;
+
+            shade = 1.0;
+          } else {
+            // -------------------------------
+            // 左からカール
+            // -------------------------------
+
+            final t =
+                u /
+                    math.max(
+                      0.0001,
+                      progress,
+                    );
+
+            final angle =
+                t * maxAngle;
+
+            final fold =
+                left +
+                    width -
+                    flatWidth;
+
+            destX =
+                fold +
+                    radius *
+                        (1.0 -
+                            math.cos(
+                              angle,
+                            ));
+
+            final lift =
+                math.sin(angle) *
+                    math.sin(
+                      math.pi * v,
+                    ) *
+                    math.min(
+                      18.0,
+                      height * 0.025,
+                    );
+
+            destY =
+                py + lift;
+
+            shade =
+                0.70 +
+                    0.30 *
+                        math.cos(
+                          angle,
+                        );
+          }
+        }
+
+        // ------------------------------------------------------
+        // 少しだけ立体感
+        // ------------------------------------------------------
+
+        final normalizedShade =
+            shade.clamp(
+              0.35,
+              1.0,
+            );
+
+        positions.add(
+          Offset(
+            destX,
+            destY,
+          ),
+        );
+
+        textures.add(
+          Offset(
+            sourceX,
+            sourceY,
+          ),
+        );
+
+        colors.add(
+          Color.fromRGBO(
+            255,
+            255,
+            255,
+            normalizedShade,
+          ),
+        );
+      }
+    }
+
+    // ----------------------------------------------------------
+    // 三角形
+    // ----------------------------------------------------------
+
+    final stride =
+        columns + 1;
+
+    for (int y = 0;
+        y < rows;
+        y++) {
+      for (int x = 0;
+          x < columns;
+          x++) {
+        final a =
+            y * stride + x;
+
+        final b =
+            a + 1;
+
+        final c =
+            a + stride;
+
+        final d =
+            c + 1;
+
+        indices.add(a);
+        indices.add(c);
+        indices.add(b);
+
+        indices.add(b);
+        indices.add(c);
+        indices.add(d);
+      }
+    }
+
+    // ----------------------------------------------------------
+    // テクスチャ付きメッシュ
+    // ----------------------------------------------------------
+
+    final vertices =
+        ui.Vertices(
+      ui.VertexMode.triangles,
+      positions,
+      textureCoordinates:
+          textures,
+      colors: colors,
+      indices: indices,
+    );
+
+    final paint = Paint()
+      ..shader = ui.ImageShader(
+        image,
+        TileMode.clamp,
+        TileMode.clamp,
+        Float64List.fromList([
+          1, 0, 0, 0,
+          0, 1, 0, 0,
+          0, 0, 1, 0,
+          0, 0, 0, 1,
+        ]),
+        filterQuality:
+            FilterQuality.medium,
+      );
+
+    canvas.drawVertices(
+      vertices,
+      BlendMode.modulate,
+      paint,
+    );
+
+    vertices.dispose();
+
+    canvas.restore();
+
+    // ----------------------------------------------------------
+    // カールの影
+    // ----------------------------------------------------------
+
+    _drawCurlShadow(
+      canvas,
+      size,
+      pageRect,
+    );
+  }
+
+  // ========================================================================
+  // カールの影
+  // ========================================================================
+
+  void _drawCurlShadow(
+    Canvas canvas,
+    Size size,
+    Rect pageRect,
+  ) {
+    if (progress <= 0) {
+      return;
+    }
+
+    final nextDirection =
+        isRightToLeft
+            ? isNextPage
+            : !isNextPage;
+
+    final shadowWidth =
+        math.max(
+          10.0,
+          pageRect.width *
+              0.035 *
+              progress,
+        );
+
+    final foldX = nextDirection
+        ? pageRect.left +
+            pageRect.width *
+                (1.0 - progress)
+        : pageRect.left +
+            pageRect.width *
+                progress;
+
+    final rect =
+        nextDirection
+            ? Rect.fromLTWH(
+                foldX -
+                    shadowWidth,
+                pageRect.top,
+                shadowWidth,
+                pageRect.height,
+              )
+            : Rect.fromLTWH(
+                foldX,
+                pageRect.top,
+                shadowWidth,
+                pageRect.height,
+              );
+
+    final gradient =
+        nextDirection
+            ? LinearGradient(
+                begin:
+                    Alignment.centerLeft,
+                end:
+                    Alignment.centerRight,
+                colors: [
+                  Colors.black.withOpacity(
+                    0.28 *
+                        progress,
+                  ),
+                  Colors.transparent,
+                ],
+              )
+            : LinearGradient(
+                begin:
+                    Alignment.centerRight,
+                end:
+                    Alignment.centerLeft,
+                colors: [
+                  Colors.black.withOpacity(
+                    0.28 *
+                        progress,
+                  ),
+                  Colors.transparent,
+                ],
+              );
+
+    final paint =
+        Paint()
+          ..shader =
+              gradient.createShader(
+            rect,
+          );
+
+    canvas.drawRect(
+      rect,
+      paint,
+    );
+  }
+
+  // ========================================================================
+  // 画像を画面内に収める
+  // ========================================================================
+
+  Rect _fitRect(
+    ui.Image image,
+    Size size,
+  ) {
+    final imageRatio =
+        image.width /
+            image.height;
+
+    final screenRatio =
+        size.width /
+            size.height;
+
+    double width;
+    double height;
+
+    if (imageRatio > screenRatio) {
+      width = size.width;
+      height =
+          width / imageRatio;
+    } else {
+      height = size.height;
+      width =
+          height * imageRatio;
+    }
+
+    final left =
+        (size.width - width) / 2;
+
+    final top =
+        (size.height - height) / 2;
+
+    return Rect.fromLTWH(
+      left,
+      top,
+      width,
+      height,
+    );
   }
 
   @override
-  bool shouldReclip(VerticalStraightClipper oldClipper) {
-    return oldClipper.remainWidth != remainWidth || oldClipper.isFromRight != isFromRight;
+  bool shouldRepaint(
+    covariant PageCurlPainter oldDelegate,
+  ) {
+    return oldDelegate.currentPage !=
+            currentPage ||
+        oldDelegate.underPage !=
+            underPage ||
+        oldDelegate.progress !=
+            progress ||
+        oldDelegate.isNextPage !=
+            isNextPage ||
+        oldDelegate.isRightToLeft !=
+            isRightToLeft;
   }
 }

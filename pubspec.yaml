@@ -1,26 +1,19 @@
-name: pdf_reader
-description: A PDF reader with realistic page curl.
-publish_to: 'none'
+#!/bin/bash
+set -e
 
-version: 1.0.0+1
+echo "=== Check Flutter project ==="
 
-environment:
-  sdk: '>=3.13.0 <4.0.0'
+if [ ! -d "android" ]; then
+  echo "android directory is missing."
+  echo "Creating Flutter project structure..."
 
-dependencies:
-  flutter:
-    sdk: flutter
+  flutter create .
+else
+  echo "android directory already exists."
+fi
 
-  cupertino_icons: ^1.0.8
-  http: ^1.2.2
-  path_provider: ^2.1.4
-  pdfx: ^2.6.0
+echo "=== Flutter pub get ==="
 
-dev_dependencies:
-  flutter_test:
-    sdk: flutter
+flutter pub get
 
-  flutter_lints: ^5.0.0
-
-flutter:
-  uses-material-design: true
+echo "=== Project structure ready ==="

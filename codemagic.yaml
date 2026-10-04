@@ -1,1 +1,27 @@
+workflows:
+  android-workflow:
+    name: Android APK
 
+    environment:
+      flutter: stable
+
+    scripts:
+      - name: Create Android project
+        script: |
+          set -e
+          echo "=== Creating Android project ==="
+          flutter create --platforms=android .
+          echo "=== Checking Android directory ==="
+          test -d android
+          ls -la android
+
+      - name: Get Flutter packages
+        script: |
+          flutter pub get
+
+      - name: Build APK
+        script: |
+          flutter build apk --debug
+
+    artifacts:
+      - build/app/outputs/flutter-apk/*.apk

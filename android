@@ -1,1 +1,7 @@
+# android フォルダを含むプラットフォーム構成を自動生成
+flutter create .
 
+# 変更内容をGitに追加してリモートリポジトリへコミット＆プッシュ
+git add .
+git commit -m "Add android platform files"
+git push origin main

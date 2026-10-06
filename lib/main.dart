@@ -1,5 +1,5 @@
+import 'dart:io';
 import 'dart:async';
-import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:path_provider/path_provider.dart';
@@ -48,16 +48,18 @@ class _PdfReaderScreenState extends State<PdfReaderScreen> {
 
   Future<void> _loadSamplePdf() async {
     try {
-      // サンプルPDFのロード（必要に応じてURLを変更してください）
+      // サンプルPDFのダウンロード
       final url = Uri.parse(
         'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf',
       );
       final response = await http.get(url);
       if (response.statusCode == 200) {
         final dir = await getTemporaryDirectory();
-        final file = '${dir.path}/sample.pdf';
-        final pdfFile = await Image.file(file).file.writeAsBytes(response.bodyBytes);
-        final document = await PdfDocument.openFile(pdfFile.path);
+        final filePath = '${dir.path}/sample.pdf';
+        final file = File(filePath);
+        await file.writeAsBytes(response.bodyBytes);
+
+        final document = await PdfDocument.openFile(file.path);
         setState(() {
           _pdfDocument = document;
           _totalPages = document.pagesCount;
@@ -232,9 +234,7 @@ class RealPageCurlPainter extends CustomPainter {
     required bool isRightToLeft,
   }) : _isRightToLeft = isRightToLeft;
 
-  // 外部参照用のゲッターを追加（エラー回避）
   bool get isRightToLeft => _isRightToLeft;
-  bool get _isRightToLeftGetter => _isRightToLeft;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -242,7 +242,6 @@ class RealPageCurlPainter extends CustomPainter {
       ..color = Colors.black.withOpacity(0.05)
       ..style = PaintingStyle.fill;
 
-    // ページの影（めくり効果の背景グラデーション）
     final shadowPath = Path();
     if (_isRightToLeft) {
       shadowPath.moveTo(0, 0);

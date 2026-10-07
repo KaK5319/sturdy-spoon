@@ -41,11 +41,13 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     _loadPdf();
   }
 
-  // httpでPDFを取得してコントローラーを初期化
+  // 14ページある複数ページPDFを取得
   Future<void> _loadPdf() async {
     try {
       final response = await http.get(
-        Uri.parse('https://pdfobject.com/pdf/sample.pdf'),
+        Uri.parse(
+          'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf',
+        ),
       );
 
       if (response.statusCode == 200) {

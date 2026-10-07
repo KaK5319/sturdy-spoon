@@ -1,5 +1,5 @@
 name: pdf_reader
-description: "A new Flutter project for Manga / PDF Reader with 3D Page Flip."
+description: "Realistic 3D Manga Page Curl Reader."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,15 +11,12 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # UI & Icon
-  cupertino_icons: ^1.0.6
-
-  # Networking & PDF processing
+  # Networking & PDF
   http: ^1.2.0
   pdfx: ^2.6.0
 
-  # 3D Page Flip effect
-  page_flip: ^0.2.1
+  # 高度な3Dカール・裏面描画パッケージ
+  curl_page_view: ^0.1.2
 
 dev_dependencies:
   flutter_test:

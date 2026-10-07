@@ -1,4 +1,6 @@
+import 'dart:typed_data';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:pdfx/pdfx.dart';
 
 void main() {
@@ -27,23 +29,49 @@ class MangaReaderScreen extends StatefulWidget {
 }
 
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
-  late PdfControllerPinch _pdfController;
+  PdfControllerPinch? _pdfController;
   bool _isRightToLeft = true; // 日本の漫画用（右開き）
+  bool _isLoading = true;
+  String? _errorMessage;
 
   @override
   void initState() {
     super.initState();
-    // ネット上のサンプルPDF、またはアセットPDFを読み込み
-    _pdfController = PdfControllerPinch(
-      document: PdfDocument.openData(
-        InternetFile.get('https://pdfobject.com/pdf/sample.pdf'),
-      ),
-    );
+    _loadPdf();
+  }
+
+  // ネットワークからPDFデータを取得してコントローラーを初期化
+  Future<void> _loadPdf() async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://pdfobject.com/pdf/sample.pdf'),
+      );
+
+      if (response.statusCode == 200) {
+        final Uint8List bytes = response.bodyBytes;
+        setState(() {
+          _pdfController = PdfControllerPinch(
+            document: PdfDocument.openData(bytes),
+          );
+          _isLoading = false;
+        });
+      } else {
+        setState(() {
+          _errorMessage = 'PDFのダウンロードに失敗しました (Status: ${response.statusCode})';
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      setState(() {
+        _errorMessage = 'エラーが発生しました: $e';
+        _isLoading = false;
+      });
+    }
   }
 
   @override
   void dispose() {
-    _pdfController.dispose();
+    _pdfController?.dispose();
     super.dispose();
   }
 
@@ -65,21 +93,47 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           ),
         ],
       ),
-      body: Directionality(
-        // 右開き（右から左へスライド・めくる）設定
-        textDirection: _isRightToLeft ? TextDirection.rtl : TextDirection.ltr,
-        child: PdfViewPinch(
-          controller: _pdfController,
-          scrollDirection: Axis.horizontal,
-          builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
-            options: const DefaultBuilderOptions(),
-            documentLoaderBuilder: (_) =>
-                const Center(child: CircularProgressIndicator()),
-            pageLoaderBuilder: (_) =>
-                const Center(child: CircularProgressIndicator()),
-            errorBuilder: (_, error) =>
-                Center(child: Text(error.toString())),
-          ),
+      body: _buildBody(),
+    );
+  }
+
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('PDFを読み込み中...'),
+          ],
+        ),
+      );
+    }
+
+    if (_errorMessage != null) {
+      return Center(
+        child: Text(
+          _errorMessage!,
+          style: const TextStyle(color: Colors.redAccent),
+        ),
+      );
+    }
+
+    return Directionality(
+      // 右開き（右から左へスライド・めくる）設定
+      textDirection: _isRightToLeft ? TextDirection.rtl : TextDirection.ltr,
+      child: PdfViewPinch(
+        controller: _pdfController!,
+        scrollDirection: Axis.horizontal,
+        builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
+          options: const DefaultBuilderOptions(),
+          documentLoaderBuilder: (_) =>
+              const Center(child: CircularProgressIndicator()),
+          pageLoaderBuilder: (_) =>
+              const Center(child: CircularProgressIndicator()),
+          errorBuilder: (_, error) =>
+              Center(child: Text(error.toString())),
         ),
       ),
     );

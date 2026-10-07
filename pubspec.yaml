@@ -15,8 +15,8 @@ dependencies:
   http: ^1.2.0
   pdfx: ^2.6.0
 
-  # 高度な3Dカール・裏面描画パッケージ
-  curl_page_view: ^0.1.2
+  # 実在する本格3Dページめくりパッケージ
+  turnable_page: ^1.1.0
 
 dev_dependencies:
   flutter_test:

@@ -41,7 +41,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     _loadPdf();
   }
 
-  // 14ページある複数ページPDFを取得
+  // 確実に全14ページある複数ページPDFを取得
   Future<void> _loadPdf() async {
     try {
       final response = await http.get(

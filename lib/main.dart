@@ -2,7 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pdfx/pdfx.dart';
-import 'package:curl_page_view/curl_page_view.dart';
+import 'package:turnable_page/turnable_page.dart';
 
 void main() {
   runApp(const MangaReaderApp());
@@ -98,7 +98,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF6E6E6E), // 画像のようなグレーの背景色
+      backgroundColor: const Color(0xFF6E6E6E), // 画像通りの背景グレー
       body: SafeArea(
         child: _buildBody(),
       ),
@@ -131,9 +131,19 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
       );
     }
 
-    return CurlPageView(
-      children: _pageImages,
-      isVertical: false,
+    return TurnablePage(
+      pageCount: _pageImages.length,
+      pageViewMode: PageViewMode.single,
+      settings: const FlipSettings(
+        drawShadow: true,
+        showCenterShadow: true,
+        centerShadowColor: Colors.black54,
+        outerShadowColor: Colors.black38,
+        innerShadowColor: Colors.black26,
+      ),
+      builder: (context, index, constraints) {
+        return _pageImages[index];
+      },
     );
   }
 }

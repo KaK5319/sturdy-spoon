@@ -31,7 +31,6 @@ class MangaReaderScreen extends StatefulWidget {
 
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
   final GlobalKey<PageFlipWidgetState> _pageFlipKey = GlobalKey<PageFlipWidgetState>();
-  PdfDocument? _pdfDocument;
   List<Widget> _pageWidgets = [];
   bool _isLoading = true;
   String? _errorMessage;
@@ -41,10 +40,10 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   @override
   void initState() {
     super.initState();
-    _loadPdfAndPreparePages();
+    _loadPdfAndRenderPages();
   }
 
-  Future<void> _loadPdfAndPreparePages() async {
+  Future<void> _loadPdfAndRenderPages() async {
     try {
       final response = await http.get(
         Uri.parse(
@@ -54,25 +53,32 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
       if (response.statusCode == 200) {
         final Uint8List bytes = response.bodyBytes;
-        final doc = await PdfDocument.openData(bytes);
-        _pdfDocument = doc;
-        _totalPages = doc.pagesCount;
+        final document = await PdfDocument.openData(bytes);
+        _totalPages = document.pagesCount;
 
-        // 各ページをPDFビュー描画用ウィジェットに変換
         List<Widget> pages = [];
-        for (int i = 1; i <= doc.pagesCount; i++) {
-          pages.add(
-            Container(
-              color: Colors.white,
-              child: PdfPageView(
-                controller: PdfPageController(
-                  document: Future.value(doc),
-                  initialPage: i,
+        for (int i = 1; i <= document.pagesCount; i++) {
+          final page = await document.getPage(i);
+          final pageImage = await page.render(
+            width: page.width * 2,
+            height: page.height * 2,
+            format: PdfPageImageFormat.jpeg,
+          );
+          await page.close();
+
+          if (pageImage != null) {
+            pages.add(
+              Container(
+                color: Colors.white,
+                child: Image.memory(
+                  pageImage.bytes,
+                  fit: BoxFit.contain,
                 ),
               ),
-            ),
-          );
+            );
+          }
         }
+        await document.close();
 
         setState(() {
           _pageWidgets = pages;
@@ -90,12 +96,6 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
         _isLoading = false;
       });
     }
-  }
-
-  @override
-  void dispose() {
-    _pdfDocument?.close();
-    super.dispose();
   }
 
   @override
@@ -143,7 +143,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('PDFを読み込み・3Dページ作成中...'),
+            Text('PDFを読み込み・3Dページ生成中...'),
           ],
         ),
       );
@@ -159,11 +159,10 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     }
 
     return Directionality(
-      // 右開き（右から左にめくる）
+      // 右開き（右から左へめくる）
       textDirection: TextDirection.rtl,
       child: PageFlipWidget(
         key: _pageFlipKey,
-        cutoff: 0.2, // めくり感度のしきい値
         children: _pageWidgets,
       ),
     );

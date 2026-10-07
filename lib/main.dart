@@ -1,6 +1,4 @@
-import 'dart:typed_data';
 import 'package:flutter/material.dart';
-import 'package:http/http.dart' as http;
 import 'package:pdfx/pdfx.dart';
 
 void main() {
@@ -13,9 +11,9 @@ class MangaReaderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: '3D Manga Reader',
+      title: 'PDF Reader',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.dark(),
+      theme: ThemeData.light(),
       home: const MangaReaderScreen(),
     );
   }
@@ -29,111 +27,79 @@ class MangaReaderScreen extends StatefulWidget {
 }
 
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
-  PdfControllerPinch? _pdfController;
-  bool _isRightToLeft = true; // 日本の漫画用（右開き）
-  bool _isLoading = true;
-  String? _errorMessage;
+  late PdfController _pdfController;
+  int _actualPage = 1;
+  int _allPagesCount = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadPdf();
-  }
-
-  // ネットワークからPDFデータを取得してコントローラーを初期化
-  Future<void> _loadPdf() async {
-    try {
-      final response = await http.get(
-        Uri.parse('https://pdfobject.com/pdf/sample.pdf'),
-      );
-
-      if (response.statusCode == 200) {
-        final Uint8List bytes = response.bodyBytes;
-        setState(() {
-          _pdfController = PdfControllerPinch(
-            document: PdfDocument.openData(bytes),
-          );
-          _isLoading = false;
-        });
-      } else {
-        setState(() {
-          _errorMessage = 'PDFのダウンロードに失敗しました (Status: ${response.statusCode})';
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      setState(() {
-        _errorMessage = 'エラーが発生しました: $e';
-        _isLoading = false;
-      });
-    }
+    _pdfController = PdfController(
+      document: PdfDocument.openData(
+        InternetFile.get('https://pdfobject.com/pdf/sample.pdf'),
+      ),
+    );
   }
 
   @override
   void dispose() {
-    _pdfController?.dispose();
+    _pdfController.dispose();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF1E1E1E),
       appBar: AppBar(
-        title: const Text('漫画リーダー'),
-        actions: [
-          IconButton(
-            icon: Icon(_isRightToLeft ? Icons.swap_horiz : Icons.swap_horiz_sharp),
-            tooltip: 'めくり方向切替',
-            onPressed: () {
-              setState(() {
-                _isRightToLeft = !_isRightToLeft;
-              });
-            },
-          ),
-        ],
+        title: Text('PDF Reader ($_actualPage/$_allPagesCount)'),
       ),
-      body: _buildBody(),
-    );
-  }
-
-  Widget _buildBody() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
+      body: Directionality(
+        // 右開き（右から左へめくる）に設定
+        textDirection: TextDirection.rtl,
+        child: PdfView(
+          controller: _pdfController,
+          scrollDirection: Axis.horizontal,
+          onDocumentLoaded: (document) {
+            setState(() {
+              _allPagesCount = document.pagesCount;
+            });
+          },
+          onPageChanged: (page) {
+            setState(() {
+              _actualPage = page;
+            });
+          },
+        ),
+      ),
+      bottomNavigationBar: Container(
+        height: 60,
+        color: Colors.grey[100],
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
           children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('PDFを読み込み中...'),
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                _pdfController.previousPage(
+                  curve: Curves.ease,
+                  duration: const Duration(milliseconds: 300),
+                );
+              },
+            ),
+            Text(
+              'ページ $_actualPage / $_allPagesCount',
+              style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+            ),
+            IconButton(
+              icon: const Icon(Icons.arrow_forward),
+              onPressed: () {
+                _pdfController.nextPage(
+                  curve: Curves.ease,
+                  duration: const Duration(milliseconds: 300),
+                );
+              },
+            ),
           ],
-        ),
-      );
-    }
-
-    if (_errorMessage != null) {
-      return Center(
-        child: Text(
-          _errorMessage!,
-          style: const TextStyle(color: Colors.redAccent),
-        ),
-      );
-    }
-
-    return Directionality(
-      // 右開き（右から左へスライド・めくる）設定
-      textDirection: _isRightToLeft ? TextDirection.rtl : TextDirection.ltr,
-      child: PdfViewPinch(
-        controller: _pdfController!,
-        scrollDirection: Axis.horizontal,
-        builders: PdfViewPinchBuilders<DefaultBuilderOptions>(
-          options: const DefaultBuilderOptions(),
-          documentLoaderBuilder: (_) =>
-              const Center(child: CircularProgressIndicator()),
-          pageLoaderBuilder: (_) =>
-              const Center(child: CircularProgressIndicator()),
-          errorBuilder: (_, error) =>
-              Center(child: Text(error.toString())),
         ),
       ),
     );

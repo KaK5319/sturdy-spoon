@@ -2,6 +2,7 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:pdfx/pdfx.dart';
+import 'package:page_flip/page_flip.dart';
 
 void main() {
   runApp(const MangaReaderApp());
@@ -13,9 +14,9 @@ class MangaReaderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
-      title: 'PDF Reader',
+      title: '3D Manga Reader',
       debugShowCheckedModeBanner: false,
-      theme: ThemeData.light(),
+      theme: ThemeData.dark(),
       home: const MangaReaderScreen(),
     );
   }
@@ -29,20 +30,21 @@ class MangaReaderScreen extends StatefulWidget {
 }
 
 class _MangaReaderScreenState extends State<MangaReaderScreen> {
-  PdfController? _pdfController;
-  int _actualPage = 1;
-  int _allPagesCount = 0;
+  final GlobalKey<PageFlipWidgetState> _pageFlipKey = GlobalKey<PageFlipWidgetState>();
+  PdfDocument? _pdfDocument;
+  List<Widget> _pageWidgets = [];
   bool _isLoading = true;
   String? _errorMessage;
+  int _currentPage = 1;
+  int _totalPages = 0;
 
   @override
   void initState() {
     super.initState();
-    _loadPdf();
+    _loadPdfAndPreparePages();
   }
 
-  // 確実に全14ページある複数ページPDFを取得
-  Future<void> _loadPdf() async {
+  Future<void> _loadPdfAndPreparePages() async {
     try {
       final response = await http.get(
         Uri.parse(
@@ -52,15 +54,33 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
       if (response.statusCode == 200) {
         final Uint8List bytes = response.bodyBytes;
-        setState(() {
-          _pdfController = PdfController(
-            document: PdfDocument.openData(bytes),
+        final doc = await PdfDocument.openData(bytes);
+        _pdfDocument = doc;
+        _totalPages = doc.pagesCount;
+
+        // 各ページをPDFビュー描画用ウィジェットに変換
+        List<Widget> pages = [];
+        for (int i = 1; i <= doc.pagesCount; i++) {
+          pages.add(
+            Container(
+              color: Colors.white,
+              child: PdfPageView(
+                controller: PdfPageController(
+                  document: Future.value(doc),
+                  initialPage: i,
+                ),
+              ),
+            ),
           );
+        }
+
+        setState(() {
+          _pageWidgets = pages;
           _isLoading = false;
         });
       } else {
         setState(() {
-          _errorMessage = 'PDFのダウンロードに失敗しました (Status: ${response.statusCode})';
+          _errorMessage = 'PDFの取得に失敗しました (Status: ${response.statusCode})';
           _isLoading = false;
         });
       }
@@ -74,18 +94,44 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
   @override
   void dispose() {
-    _pdfController?.dispose();
+    _pdfDocument?.close();
     super.dispose();
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: const Color(0xFF1E1E1E),
       appBar: AppBar(
-        title: Text('PDF Reader ($_actualPage/$_allPagesCount)'),
+        title: Text('3D 漫画リーダー ($_currentPage/$_totalPages)'),
+        backgroundColor: Colors.black,
       ),
       body: _buildBody(),
-      bottomNavigationBar: _buildBottomBar(),
+      bottomNavigationBar: Container(
+        height: 60,
+        color: Colors.black,
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceAround,
+          children: [
+            IconButton(
+              icon: const Icon(Icons.arrow_back),
+              onPressed: () {
+                _pageFlipKey.currentState?.previousPage();
+              },
+            ),
+            Text(
+              'ページ $_currentPage / $_totalPages',
+              style: const TextStyle(color: Colors.white, fontSize: 16),
+            ),
+            IconButton(
+              icon: const Icon(Icons.arrow_forward),
+              onPressed: () {
+                _pageFlipKey.currentState?.nextPage();
+              },
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -97,7 +143,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           children: [
             CircularProgressIndicator(),
             SizedBox(height: 16),
-            Text('PDFを読み込み中...'),
+            Text('PDFを読み込み・3Dページ作成中...'),
           ],
         ),
       );
@@ -113,59 +159,12 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     }
 
     return Directionality(
-      // 右開き（右から左へめくる）設定
+      // 右開き（右から左にめくる）
       textDirection: TextDirection.rtl,
-      child: PdfView(
-        controller: _pdfController!,
-        scrollDirection: Axis.horizontal,
-        onDocumentLoaded: (document) {
-          setState(() {
-            _allPagesCount = document.pagesCount;
-          });
-        },
-        onPageChanged: (page) {
-          setState(() {
-            _actualPage = page;
-          });
-        },
-      ),
-    );
-  }
-
-  Widget _buildBottomBar() {
-    return Container(
-      height: 60,
-      color: Colors.grey[100],
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceAround,
-        children: [
-          IconButton(
-            icon: const Icon(Icons.arrow_back),
-            onPressed: _pdfController == null
-                ? null
-                : () {
-                    _pdfController!.previousPage(
-                      curve: Curves.ease,
-                      duration: const Duration(milliseconds: 300),
-                    );
-                  },
-          ),
-          Text(
-            'ページ $_actualPage / $_allPagesCount',
-            style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
-          ),
-          IconButton(
-            icon: const Icon(Icons.arrow_forward),
-            onPressed: _pdfController == null
-                ? null
-                : () {
-                    _pdfController!.nextPage(
-                      curve: Curves.ease,
-                      duration: const Duration(milliseconds: 300),
-                    );
-                  },
-          ),
-        ],
+      child: PageFlipWidget(
+        key: _pageFlipKey,
+        cutoff: 0.2, // めくり感度のしきい値
+        children: _pageWidgets,
       ),
     );
   }

@@ -98,7 +98,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF6E6E6E), // 画像通りの背景グレー
+      backgroundColor: const Color(0xFF6E6E6E), // 目標画像に近い背景色
       body: SafeArea(
         child: _buildBody(),
       ),
@@ -134,7 +134,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     return TurnablePage(
       pageCount: _pageImages.length,
       pageViewMode: PageViewMode.single,
-      settings: const FlipSettings(
+      settings: FlipSettings(
         drawShadow: true,
         showCenterShadow: true,
         centerShadowColor: Colors.black54,

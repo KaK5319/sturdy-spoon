@@ -1,5 +1,5 @@
 name: pdf_reader
-description: "Realistic 3D Manga Page Curl Reader."
+description: "Custom Shader 3D Page Curl Reader."
 publish_to: 'none'
 
 version: 1.0.0+1
@@ -11,12 +11,8 @@ dependencies:
   flutter:
     sdk: flutter
 
-  # Networking & PDF
   http: ^1.2.0
   pdfx: ^2.6.0
-
-  # 実在する本格3Dページめくりパッケージ
-  turnable_page: ^1.1.0
 
 dev_dependencies:
   flutter_test:
@@ -25,3 +21,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+  # カスタムシェーダーの読み込み
+  shaders:
+    - shaders/page_curl.frag

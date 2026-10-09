@@ -14,7 +14,7 @@ class MangaReaderApp extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return const MaterialApp(
-      title: '3D Cylinder Curl Reader',
+      title: 'Ultimate 3D Manga Curl',
       debugShowCheckedModeBanner: false,
       home: MangaReaderScreen(),
     );
@@ -36,7 +36,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
   String? _errorMessage;
 
   int _currentIndex = 0;
-  double _dragProgress = 0.0; // 0.0 〜 1.0
+  double _dragProgress = 0.0;
 
   late AnimationController _animController;
 
@@ -45,7 +45,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
     super.initState();
     _animController = AnimationController(
       vsync: this,
-      duration: const Duration(milliseconds: 300),
+      duration: const Duration(milliseconds: 250),
     )..addListener(() {
         setState(() {
           _dragProgress = _animController.value;
@@ -116,7 +116,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF6E6E6E),
+      backgroundColor: const Color(0xFF555555), // 画面に馴染むダークグレー
       body: SafeArea(
         child: _buildBody(),
       ),
@@ -131,7 +131,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
           children: [
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text('PDFおよびシェーダー読み込み中...',
+            Text('最高画質レンダリング＆シェーダー構築中...',
                 style: TextStyle(color: Colors.white)),
           ],
         ),
@@ -159,17 +159,24 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
         });
       },
       onHorizontalDragEnd: (details) {
-        if (_dragProgress > 0.35 && _currentIndex + 1 < _pageImages.length) {
-          // 35%以上めくったら最後まで自動アニメーションして次のページへ
-          _animController.forward(from: _dragProgress).then((_) {
+        // フリック速度（弾いた速さ）を取得してスムーズに判定
+        final velocity = details.primaryVelocity ?? 0.0;
+        
+        if (_dragProgress > 0.3 || velocity < -400) {
+          // 速度が速い、または30%以上めくっていたら最後まで素早く滑らかに移動
+          _animController
+              .animateTo(1.0, curve: Curves.easeOutCubic)
+              .then((_) {
             setState(() {
-              _currentIndex++;
+              if (_currentIndex + 1 < _pageImages.length) {
+                _currentIndex++;
+              }
               _dragProgress = 0.0;
             });
           });
         } else {
-          // 満たない場合は元のページに戻る
-          _animController.reverse(from: _dragProgress);
+          // 満たない場合は吸い付くように元に戻る
+          _animController.animateTo(0.0, curve: Curves.easeOutCubic);
         }
       },
       child: CustomPaint(

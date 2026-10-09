@@ -28,7 +28,8 @@ class MangaReaderScreen extends StatefulWidget {
   State<MangaReaderScreen> createState() => _MangaReaderScreenState();
 }
 
-class _MangaReaderScreenState extends State<MangaReaderScreen> {
+class _MangaReaderScreenState extends State<MangaReaderScreen>
+    with SingleTickerProviderStateMixin {
   ui.FragmentShader? _shader;
   List<ui.Image> _pageImages = [];
   bool _isLoading = true;
@@ -37,19 +38,35 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
   int _currentIndex = 0;
   double _dragProgress = 0.0; // 0.0 〜 1.0
 
+  late AnimationController _animController;
+
   @override
   void initState() {
     super.initState();
+    _animController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 300),
+    )..addListener(() {
+        setState(() {
+          _dragProgress = _animController.value;
+        });
+      });
+
     _loadShaderAndPdf();
+  }
+
+  @override
+  void dispose() {
+    _animController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadShaderAndPdf() async {
     try {
-      // 1. シェーダーの読み込み
-      final program = await ui.FragmentProgram.fromAsset('shaders/page_curl.frag');
+      final program =
+          await ui.FragmentProgram.fromAsset('shaders/page_curl.frag');
       _shader = program.fragmentShader();
 
-      // 2. PDFの読み込みとレンダリング
       final response = await http.get(
         Uri.parse(
           'https://raw.githubusercontent.com/mozilla/pdf.js/ba2edeae/web/compressed.tracemonkey-pldi-09.pdf',
@@ -114,7 +131,8 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
           children: [
             CircularProgressIndicator(color: Colors.white),
             SizedBox(height: 16),
-            Text('PDFおよびシェーダー読み込み中...', style: TextStyle(color: Colors.white)),
+            Text('PDFおよびシェーダー読み込み中...',
+                style: TextStyle(color: Colors.white)),
           ],
         ),
       );
@@ -122,7 +140,8 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
 
     if (_errorMessage != null) {
       return Center(
-        child: Text(_errorMessage!, style: const TextStyle(color: Colors.redAccent)),
+        child: Text(_errorMessage!,
+            style: const TextStyle(color: Colors.redAccent)),
       );
     }
 
@@ -134,18 +153,24 @@ class _MangaReaderScreenState extends State<MangaReaderScreen> {
     return GestureDetector(
       onHorizontalDragUpdate: (details) {
         setState(() {
-          // ドラッグ量に応じて進行度(0.0〜1.0)を更新
-          _dragProgress -= details.primaryDelta! / MediaQuery.of(context).size.width;
+          _dragProgress -=
+              details.primaryDelta! / MediaQuery.of(context).size.width;
           _dragProgress = _dragProgress.clamp(0.0, 1.0);
         });
       },
       onHorizontalDragEnd: (details) {
-        setState(() {
-          if (_dragProgress > 0.4 && _currentIndex + 1 < _pageImages.length) {
-            _currentIndex++;
-          }
-          _dragProgress = 0.0;
-        });
+        if (_dragProgress > 0.35 && _currentIndex + 1 < _pageImages.length) {
+          // 35%以上めくったら最後まで自動アニメーションして次のページへ
+          _animController.forward(from: _dragProgress).then((_) {
+            setState(() {
+              _currentIndex++;
+              _dragProgress = 0.0;
+            });
+          });
+        } else {
+          // 満たない場合は元のページに戻る
+          _animController.reverse(from: _dragProgress);
+        }
       },
       child: CustomPaint(
         size: Size.infinite,
@@ -175,7 +200,6 @@ class PageCurlPainter extends CustomPainter {
 
   @override
   void paint(Canvas canvas, Size size) {
-    // シェーダーのパラメータを設定
     shader.setFloat(0, size.width);
     shader.setFloat(1, size.height);
     shader.setFloat(2, progress);

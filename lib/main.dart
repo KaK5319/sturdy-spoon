@@ -116,7 +116,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFF555555), // 画面に馴染むダークグレー
+      backgroundColor: const Color(0xFF555555),
       body: SafeArea(
         child: _buildBody(),
       ),
@@ -153,17 +153,17 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
     return GestureDetector(
       onHorizontalDragUpdate: (details) {
         setState(() {
+          // 指の動きに完全に追従させる
           _dragProgress -=
               details.primaryDelta! / MediaQuery.of(context).size.width;
           _dragProgress = _dragProgress.clamp(0.0, 1.0);
         });
       },
       onHorizontalDragEnd: (details) {
-        // フリック速度（弾いた速さ）を取得してスムーズに判定
         final velocity = details.primaryVelocity ?? 0.0;
         
-        if (_dragProgress > 0.3 || velocity < -400) {
-          // 速度が速い、または30%以上めくっていたら最後まで素早く滑らかに移動
+        // わずかでもめくっていれば（例: 15%以上、または左方向へのフリックがあれば）そのまま次のページへ進める
+        if (_dragProgress > 0.15 || velocity < -200) {
           _animController
               .animateTo(1.0, curve: Curves.easeOutCubic)
               .then((_) {
@@ -175,7 +175,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
             });
           });
         } else {
-          // 満たない場合は吸い付くように元に戻る
+          // しっかり戻そうとした時だけ元の位置に戻す
           _animController.animateTo(0.0, curve: Curves.easeOutCubic);
         }
       },

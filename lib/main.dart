@@ -152,7 +152,7 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
 
     return GestureDetector(
       onHorizontalDragUpdate: (details) {
-        setState(_animController.stop); // ドラッグ中はアニメーションを停止して指に直結させる
+        _animController.stop(); // 指を動かしている間はアニメーションを完全停止
         setState(() {
           _dragProgress -=
               details.primaryDelta! / MediaQuery.of(context).size.width;
@@ -162,10 +162,10 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
       onHorizontalDragEnd: (details) {
         final velocity = details.primaryVelocity ?? 0.0;
 
-        // 【改善ポイント】
-        // 1. 少しでもめくった状態（progress > 0.15）にするか、左に軽く弾いたら（velocity < -300）最後まで進む
-        // 2. それ以外（ほとんどめくっていない状態）の時だけ元の位置(0.0)に戻る
-        if (_dragProgress > 0.15 || velocity < -300) {
+        // 【完全なホールド＆吸い付きロジック】
+        // 50%以上めくっている、または左へ勢いよく弾いた場合のみ次のページへ進む
+        // 50%未満の場合は、指を離したその位置でピタッと静止させる（勝手に戻さない）
+        if (_dragProgress > 0.5 || velocity < -400) {
           _animController
               .animateTo(1.0, curve: Curves.easeOutCubic)
               .then((_) {
@@ -176,9 +176,11 @@ class _MangaReaderScreenState extends State<MangaReaderScreen>
               _dragProgress = 0.0;
             });
           });
-        } else {
+        } else if (_dragProgress < 0.1 && velocity > 400) {
+          // 右方向へハッキリ押し戻したときだけ 0.0 に戻す
           _animController.animateTo(0.0, curve: Curves.easeOutCubic);
         }
+        // ※ 上記以外（途中で指を離した場合）は、その位置（_dragProgress）で完全に停止・保持されます！
       },
       child: CustomPaint(
         size: Size.infinite,

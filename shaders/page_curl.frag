@@ -24,23 +24,42 @@ void main() {
 
     // めくりの進行に伴う折り目の位置（右端 1.0 から左方向へ 0.0 まで移動）
     float foldPos = 1.0 - progress;
+    
+    // カール（めくれ部分）の幅
+    float curlWidth = 0.08;
 
     if (uv.x < foldPos) {
-        // 1. 左側：すでにめくられた領域（次のページを表示）
+        // 1. 左側：完全にめくり終わった領域（次のページを表示）
         vec4 nextColor = texture(uTextureNext, uv);
-        fragColor = nextColor;
+        
+        // めくりぎわに落ちるやわらかい影
+        float edgeShadow = smoothstep(0.0, 0.05, foldPos - uv.x);
+        vec3 finalRgb = nextColor.rgb * mix(0.85, 1.0, edgeShadow);
+        
+        fragColor = vec4(finalRgb, nextColor.a);
     }
-    else {
-        // 2. 右側：まだめくられていない領域（現在のページを表示）
-        // ただし、折り目のすぐ近辺に美しい陰影をつけて立体感を出す
+    else if (uv.x >= foldPos && uv.x < foldPos + curlWidth) {
+        // 2. めくり部のカール領域（立体的なハイライトと影を付与）
+        float t = (uv.x - foldPos) / curlWidth; // 0.0 (折れ目) 〜 1.0 (表面)
+        
+        // 現在のページのテクスチャを取得
         vec4 currColor = texture(uTextureCurrent, uv);
         
-        // 折り目（foldPos）からの距離に応じた影の計算
-        float dist = uv.x - foldPos;
-        float shadowWidth = 0.05; // 影の幅
+        // 折り目付近を暗くし、中央に向かって立体的な光（ハイライト）を当てる
+        float shadow = smoothstep(0.0, 0.5, t) * 0.4;
+        float highlight = sin(t * 3.14159) * 0.15;
         
-        float shadow = smoothstep(0.0, shadowWidth, dist);
-        vec3 finalRgb = currColor.rgb * mix(0.5, 1.0, shadow);
+        vec3 finalRgb = currColor.rgb * (1.0 - shadow) + vec3(highlight);
+        fragColor = vec4(finalRgb, currColor.a);
+    }
+    else {
+        // 3. 右側：まだめくられていない領域（現在のページ）
+        vec4 currColor = texture(uTextureCurrent, uv);
+        
+        // めくり直前のシャドウ
+        float dist = uv.x - (foldPos + curlWidth);
+        float shadow = smoothstep(0.0, 0.08, dist);
+        vec3 finalRgb = currColor.rgb * mix(0.7, 1.0, shadow);
         
         fragColor = vec4(finalRgb, currColor.a);
     }

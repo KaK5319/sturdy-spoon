@@ -9,8 +9,6 @@ uniform sampler2D uTextureNext;
 
 out vec4 fragColor;
 
-const float PI = 3.14159265359;
-
 void main() {
     vec2 uv = FlutterFragCoord().xy / uResolution;
     float progress = clamp(uProgress, 0.0, 1.0);
@@ -24,43 +22,48 @@ void main() {
         return;
     }
 
-    // めくりの境界線（右端 1.0 から左へ移動）
-    float curlPos = 1.0 - progress * 1.02;
-    float curlWidth = 0.08; // 影と立体感をつける帯の幅
+    // ページのめくり位置（右端 1.0 から左方向へ進む）
+    // progress に合わせてダイナミックにめくり面が移動します
+    float foldLine = 1.0 - progress * 1.2;
+    
+    // めくりの影響を受ける幅（大きく取って、ページ全体がたわむようにする）
+    float curlWidth = 0.25; 
 
-    if (uv.x < curlPos) {
-        // 1. 左側：すでにめくり終わった「次のページ」（歪みなし）
+    if (uv.x < foldLine) {
+        // 1. すでにめくり進められた左側のエリア（次のページを表示）
         vec4 nextColor = texture(uTextureNext, uv);
         
-        // めくり際に落ちる自然な影
-        float shadow = smoothstep(0.0, 0.2, curlPos - uv.x);
-        vec3 finalRgb = nextColor.rgb * mix(0.5, 1.0, shadow);
+        // めくりぎわの自然な影
+        float shadow = smoothstep(0.0, 0.15, foldLine - uv.x);
+        vec3 finalRgb = nextColor.rgb * mix(0.7, 1.0, shadow);
         
         fragColor = vec4(finalRgb, nextColor.a);
-    } 
-    else if (uv.x >= curlPos && uv.x <= curlPos + curlWidth) {
-        // 2. 中央の帯：紙が折れ曲がっている立体部分（文字の歪みをなくし、綺麗な影とハイライトで表現）
-        float t = (uv.x - curlPos) / curlWidth; // 0.0 〜 1.0
+    }
+    else if (uv.x >= foldLine && uv.x <= foldLine + curlWidth) {
+        // 2. ふわっとめくれているダイナミックな曲線エリア
+        // 5ミリのような細い棒ではなく、ページ全体が大きく湾曲するグラデーションとテクスチャの合成
+        float t = (uv.x - foldLine) / curlWidth; // 0.0 (折れ目) 〜 1.0 (表面の端)
         
-        // 下地の色（紙の裏面や折れ目としての白〜グレー）
-        vec3 paperFold = vec3(0.92);
+        // 湾曲に沿って現在のページのテクスチャを少しスケーリングしてサンプリング
+        float sampleX = foldLine + t * (1.0 - foldLine);
+        vec2 sampleUv = vec2(clamp(sampleX, 0.0, 1.0), uv.y);
+        vec4 currColor = texture(uTextureCurrent, sampleUv);
         
-        // 立体感を演出するサインカーブのハイライトとシャドウ
-        float lighting = sin(t * PI) * 0.35;
-        // 端に行くほど暗くするシャドウ
-        float edgeDarkening = smoothstep(0.0, 0.3, t) * smoothstep(1.0, 0.7, t);
+        // 紙がめくれているときの立体的な陰影（中央がふわっと浮き上がるハイライトと、端のシャドウ）
+        float light = sin(t * 3.14159) * 0.25;
+        float shadow = smoothstep(0.0, 0.3, t) * smoothstep(1.0, 0.7, t);
         
-        vec3 finalRgb = paperFold + vec3(lighting) - vec3(edgeDarkening * 0.15);
+        vec3 finalRgb = currColor.rgb + vec3(light) - vec3(shadow * 0.15);
         
-        fragColor = vec4(finalRgb, 1.0);
-    } 
+        fragColor = vec4(finalRgb, currColor.a);
+    }
     else {
-        // 3. 右側：まだめくられていない「現在のページ」（歪みなし）
+        // 3. まだめくられていない右側のエリア（現在のページ）
         vec4 currColor = texture(uTextureCurrent, uv);
         
-        // カールの手前に落ちる控えめな影
-        float edgeShadow = smoothstep(curlPos + curlWidth, curlPos + curlWidth + 0.15, uv.x);
-        vec3 finalRgb = currColor.rgb * mix(0.65, 1.0, edgeShadow);
+        // めくり面の直前に落ちるやわらかい影
+        float edgeShadow = smoothstep(foldLine + curlWidth, foldLine + curlWidth + 0.2, uv.x);
+        vec3 finalRgb = currColor.rgb * mix(0.75, 1.0, edgeShadow);
         
         fragColor = vec4(finalRgb, currColor.a);
     }

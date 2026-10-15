@@ -260,7 +260,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
         final next = _cache[nextIdx];
         final ready = _shader != null && cur != null && next != null;
 
-        return Stack(children: [
+        return Stack(fit: StackFit.expand, children: [
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
@@ -277,7 +277,11 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   : const Center(child: CircularProgressIndicator()),
             ),
           ),
-          SafeArea(
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            child: SafeArea(
             child: Row(children: [
               IconButton(
                   icon: const Icon(Icons.arrow_back, color: Colors.black54),
@@ -287,7 +291,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   onPressed: () => setState(() => _rtl = !_rtl),
                   child: Text(_rtl ? '右開き' : '左開き', style: const TextStyle(color: Colors.black54))),
             ]),
-          ),
+          )),
           Positioned(
             bottom: 8,
             left: 0,

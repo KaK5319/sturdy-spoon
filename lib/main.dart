@@ -5,6 +5,8 @@ import 'dart:math' as math;
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/physics.dart';
+import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 
@@ -184,8 +186,12 @@ class Reader extends StatefulWidget {
 
 class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   ui.FragmentShader? _shader;
-  late final AnimationController _ac =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 280));
+  late final AnimationController _ac = AnimationController(vsync: this);
+
+  // 指に吸い付く感じの調整 ------------------------------
+  static const double _k = 1.07;          // 指の移動量→めくり量(1.07で折り目が指にぴったり付いてくる)
+  static const double _stiffness = 260;   // 大きいほど素早く吸い寄せる
+  static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
 
   bool _rtl = true; // 右開き
   int _index = 0;
@@ -269,17 +275,21 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   }
 
   /* ---- めくり操作 ---- */
-  void _settle(double target) {
-    final from = _progress;
+  void _settle(double target, [double velocity = 0]) {
     final m = _mode;
     _ac.stop();
-    _ac.reset();
-    final tween = Tween<double>(begin: from, end: target).chain(CurveTween(curve: Curves.easeOut));
-    void tick() => setState(() => _progress = tween.evaluate(_ac));
+    void tick() => setState(() => _progress = _ac.value);
     _ac.addListener(tick);
-    _ac.forward().whenComplete(() {
+    _ac
+        .animateWith(SpringSimulation(
+            const SpringDescription(mass: 1, stiffness: _stiffness, damping: _damping),
+            _progress,
+            target,
+            velocity))
+        .whenComplete(() {
       _ac.removeListener(tick);
       if (!mounted) return;
+      final committed = (m == 1 && target == 1) || (m == -1 && target == 0);
       setState(() {
         if (m == 1 && target == 1) _index++;
         if (m == -1 && target == 0) _index--;
@@ -287,7 +297,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
         _progress = 0;
         _acc = 0;
       });
-      widget.book.lastPage = _index; // 読んでいる位置を保存
+      if (committed) HapticFeedback.selectionClick(); // めくれた瞬間にコツッ
+      widget.book.lastPage = _index;
       widget.onChanged?.call();
     });
   }
@@ -322,7 +333,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
       }
     }
     setState(() {
-      _progress = (_mode == 1 ? _acc / w : 1 + _acc / w).clamp(0.0, 1.0);
+      final a = _acc / (w * _k);
+      _progress = (_mode == 1 ? a : 1 + a).clamp(0.0, 1.0);
     });
   }
 
@@ -331,11 +343,13 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
       _acc = 0;
       return;
     }
-    final v = (d.primaryVelocity ?? 0) * _sgn; // 正:次へ方向
+    final w = MediaQuery.of(context).size.width;
+    final v = (d.primaryVelocity ?? 0) * _sgn; // 正:次へ方向(px/秒)
+    final pv = v / (w * _k);                   // めくり量/秒
     if (_mode == 1) {
-      _settle((_progress > 0.5 || v > 800) ? 1 : 0);
+      _settle((_progress > 0.5 || v > 800) ? 1 : 0, pv);
     } else {
-      _settle((_progress < 0.5 || v < -800) ? 0 : 1);
+      _settle((_progress < 0.5 || v < -800) ? 0 : 1, pv);
     }
   }
 

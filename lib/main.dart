@@ -193,6 +193,10 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   static const double _stiffness = 260;   // 大きいほど素早く吸い寄せる
   static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
 
+  // めくりやすさの調整 ----------------------------------
+  static const double _commitAt = 0.22;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
+  static const double _flickSpeed = 250;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
+
   bool _rtl = true; // 右開き
   int _index = 0;
   int _mode = 0; // 0:停止 1:次へ -1:前へ
@@ -347,9 +351,9 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     final v = (d.primaryVelocity ?? 0) * _sgn; // 正:次へ方向(px/秒)
     final pv = v / (w * _k);                   // めくり量/秒
     if (_mode == 1) {
-      _settle((_progress > 0.5 || v > 800) ? 1 : 0, pv);
+      _settle((_progress > _commitAt || v > _flickSpeed) ? 1 : 0, pv);
     } else {
-      _settle((_progress < 0.5 || v < -800) ? 0 : 1, pv);
+      _settle((_progress < 1 - _commitAt || v < -_flickSpeed) ? 0 : 1, pv);
     }
   }
 

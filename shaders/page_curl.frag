@@ -67,7 +67,7 @@ void main() {
             float sBack  = PI * R - R * th;  // 上側(裏面が見える)
             float sFront = R * th;           // 下側(表面)
             if (a + sBack <= 1.0) {
-                float shade = ROLL_DARK + (1.0 - ROLL_DARK) * cos(th);
+                float shade = ROLL_DARK + (0.7 - ROLL_DARK) * cos(th);
                 col = vec4(mix(PAPER, cur(a + sBack, y).rgb, SEE_THROUGH) * shade, 1.0);
             } else if (a + sFront <= 1.0) {
                 col = vec4(cur(a + sFront, y).rgb * (0.5 + 0.3 * cos(th)), 1.0);

@@ -194,8 +194,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
 
   // めくりやすさの調整 ----------------------------------
-  static const double _commitAt = 0.22;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
-  static const double _flickSpeed = 250;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
+  static const double _commitAt = 0.15;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
+  static const double _flickSpeed = 150;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
 
   bool _rtl = true; // 右開き
   int _index = 0;

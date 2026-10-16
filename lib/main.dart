@@ -1,10 +1,12 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:io';
 import 'dart:math' as math;
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:path_provider/path_provider.dart';
 
 void main() => runApp(const SideBooksApp());
 
@@ -20,9 +22,65 @@ class SideBooksApp extends StatelessWidget {
 }
 
 class Book {
-  Book(this.title, this.pages);
+  Book(this.id, this.title, this.pages, [this.lastPage = 0]);
+  final String id;
   final String title;
-  final List<XFile> pages;
+  final List<String> pages; // アプリ内に保存した画像のパス
+  int lastPage;
+
+  Map<String, dynamic> toJson() =>
+      {'id': id, 'title': title, 'pages': pages, 'lastPage': lastPage};
+  factory Book.fromJson(Map<String, dynamic> j) =>
+      Book(j['id'], j['title'], List<String>.from(j['pages']), j['lastPage'] ?? 0);
+}
+
+/// 本の保存場所: アプリ専用フォルダ/books/<id>/0000.jpg ... と books.json
+class Store {
+  static Future<File> _index() async {
+    final d = await getApplicationDocumentsDirectory();
+    return File('${d.path}/books.json');
+  }
+
+  static Future<List<Book>> load() async {
+    try {
+      final f = await _index();
+      if (!await f.exists()) return [];
+      final list = jsonDecode(await f.readAsString()) as List;
+      return list
+          .map((e) => Book.fromJson(e as Map<String, dynamic>))
+          .where((b) => b.pages.isNotEmpty && File(b.pages.first).existsSync())
+          .toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> save(List<Book> books) async {
+    final f = await _index();
+    await f.writeAsString(jsonEncode(books.map((b) => b.toJson()).toList()));
+  }
+
+  static Future<Book> addBook(String title, List<XFile> files) async {
+    final d = await getApplicationDocumentsDirectory();
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final dir = Directory('${d.path}/books/$id');
+    await dir.create(recursive: true);
+    final paths = <String>[];
+    for (var i = 0; i < files.length; i++) {
+      final name = files[i].name;
+      final ext = name.contains('.') ? name.substring(name.lastIndexOf('.')) : '.jpg';
+      final dest = '${dir.path}/${i.toString().padLeft(4, '0')}$ext';
+      await File(files[i].path).copy(dest);
+      paths.add(dest);
+    }
+    return Book(id, title, paths);
+  }
+
+  static Future<void> deleteBook(Book b) async {
+    final d = await getApplicationDocumentsDirectory();
+    final dir = Directory('${d.path}/books/${b.id}');
+    if (await dir.exists()) await dir.delete(recursive: true);
+  }
 }
 
 /* ---------------- 本棚 ---------------- */
@@ -34,19 +92,51 @@ class Shelf extends StatefulWidget {
 
 class _ShelfState extends State<Shelf> {
   final List<Book> _books = [];
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    Store.load().then((l) {
+      if (mounted) setState(() => _books.addAll(l));
+    });
+  }
 
   Future<void> _import() async {
     final files = await ImagePicker().pickMultiImage();
     if (files.isEmpty) return;
     files.sort((a, b) => a.name.compareTo(b.name));
-    setState(() => _books.add(Book('本 ${_books.length + 1}', files)));
+    setState(() => _busy = true);
+    final book = await Store.addBook('本 ${_books.length + 1}', files);
+    _books.add(book);
+    await Store.save(_books);
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _confirmDelete(Book b) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('「${b.title}」を削除しますか?'),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('やめる')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('削除')),
+        ],
+      ),
+    );
+    if (ok != true) return;
+    await Store.deleteBook(b);
+    setState(() => _books.remove(b));
+    await Store.save(_books);
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(title: const Text('SideBooks')),
-      body: _books.isEmpty
+      body: _busy
+          ? const Center(child: CircularProgressIndicator())
+          : _books.isEmpty
           ? const Center(child: Text('画像を選んで読み始めよう'))
           : GridView.builder(
               padding: const EdgeInsets.all(12),
@@ -56,22 +146,22 @@ class _ShelfState extends State<Shelf> {
               itemBuilder: (_, i) {
                 final b = _books[i];
                 return GestureDetector(
+                  onLongPress: () => _confirmDelete(b),
                   onTap: () => Navigator.push(
-                      context, MaterialPageRoute(builder: (_) => Reader(book: b))),
+                      context,
+                      MaterialPageRoute(
+                          builder: (_) => Reader(book: b, onChanged: () => Store.save(_books)))),
                   child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Expanded(
-                      child: FutureBuilder<Uint8List>(
-                        future: b.pages.first.readAsBytes(),
-                        builder: (_, s) => s.hasData
-                            ? ClipRRect(
-                                borderRadius: BorderRadius.circular(4),
-                                child: Image.memory(s.data!, fit: BoxFit.cover, width: double.infinity))
-                            : const SizedBox(),
+                      child: ClipRRect(
+                        borderRadius: BorderRadius.circular(4),
+                        child: Image.file(File(b.pages.first),
+                            fit: BoxFit.cover, width: double.infinity, cacheWidth: 400),
                       ),
                     ),
                     const SizedBox(height: 6),
                     Text(b.title),
-                    Text('${b.pages.length}ページ',
+                    Text('${b.pages.length}ページ ・ ${b.lastPage + 1}ページ目まで',
                         style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   ]),
                 );
@@ -85,8 +175,9 @@ class _ShelfState extends State<Shelf> {
 
 /* ---------------- リーダー ---------------- */
 class Reader extends StatefulWidget {
-  const Reader({super.key, required this.book});
+  const Reader({super.key, required this.book, this.onChanged});
   final Book book;
+  final VoidCallback? onChanged;
   @override
   State<Reader> createState() => _ReaderState();
 }
@@ -112,6 +203,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _index = widget.book.lastPage.clamp(0, widget.book.pages.length - 1);
     ui.FragmentProgram.fromAsset('shaders/page_curl.frag')
         .then((p) => mounted ? setState(() => _shader = p.fragmentShader()) : null);
   }
@@ -127,7 +219,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 
   /* ---- 画像の読み込み(画面サイズに合わせて白背景で中央配置) ---- */
   Future<ui.Image> _load(int i, Size size, double dpr) async {
-    final bytes = await widget.book.pages[i].readAsBytes();
+    final bytes = await File(widget.book.pages[i]).readAsBytes();
     final codec = await ui.instantiateImageCodec(bytes, targetWidth: (size.width * dpr).round());
     final src = (await codec.getNextFrame()).image;
     final w = size.width * dpr, h = size.height * dpr;
@@ -195,6 +287,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
         _progress = 0;
         _acc = 0;
       });
+      widget.book.lastPage = _index; // 読んでいる位置を保存
+      widget.onChanged?.call();
     });
   }
 

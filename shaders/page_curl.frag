@@ -13,8 +13,8 @@ out vec4 fragColor;
 const float PI = 3.14159265;
 const float R  = 0.07;                       // 巻きの半径(画面幅に対する比率)
 const vec3 PAPER = vec3(1.0, 1.0, 1.0);      // 紙の裏面の色(真っ白)
-const float SEE_THROUGH = 0.08;              // 裏面に透ける絵の濃さ(0で完全な白紙)
-const float ROLL_DARK = 0.80;                // 巻きの一番暗い所の明るさ(1.0に近いほど白い)
+const float SEE_THROUGH = 0.42;              // 裏面に透ける絵の濃さ(0で完全な白紙。0.2薄め / 0.35濃いめ / 0.5かなり濃い)
+const float ROLL_DARK = 0.85;                // 巻きの一番暗い所の明るさ(1.0に近いほど白い)
 
 // 内部では常に「右端から左へめくる」座標で計算し、RTLのときだけ左右反転して読む
 vec4 cur(float x, float y) {
@@ -67,9 +67,8 @@ void main() {
             float sBack  = PI * R - R * th;  // 上側(裏面が見える)
             float sFront = R * th;           // 下側(表面)
             if (a + sBack <= 1.0) {
-                float shade = ROLL_DARK + (0.7 - ROLL_DARK) * cos(th);
-                col = vec4(mix(PAPER, cur(a + sBack, y).rgb, SEE_THROUGH) * shade, 0.20
-);
+                float shade = ROLL_DARK + (1.0 - ROLL_DARK) * cos(th);
+                col = vec4(mix(PAPER, cur(a + sBack, y).rgb, SEE_THROUGH) * shade, 1.0);
             } else if (a + sFront <= 1.0) {
                 col = vec4(cur(a + sFront, y).rgb * (0.5 + 0.3 * cos(th)), 1.0);
             }

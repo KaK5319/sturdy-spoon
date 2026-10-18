@@ -13,7 +13,7 @@ out vec4 fragColor;
 
 const float PI = 3.14159265;
 const float R_REL = 0.07;                    // 巻きの半径(画面幅に対する比率)
-const float MAX_TILT = 1.5;                  // 傾きの最大(1.0で約45度)
+const float MAX_TILT = 1.5;                  // 傾きの最大(1.0で約45度、1.5で約56度)
 const vec3 PAPER = vec3(1.0, 1.0, 1.0);      // 紙の裏面の色(真っ白)
 const float SEE_THROUGH = 0.42;              // 裏面に透ける絵の濃さ
 const float ROLL_DARK = 0.85;                // 巻きの一番暗い所の明るさ
@@ -66,15 +66,18 @@ void main() {
         if (inPage(po)) {
             col = vec4(mix(PAPER, cur(po).rgb, SEE_THROUGH), 1.0);
         } else {
-            // 折り返しの縁が落とす影
+            // 折り返しの縁が落とす影(段にならないよう、距離でなめらかに減衰)
             float sh = 0.0;
-            for (int i = 1; i <= 4; i++) {
-                float d = float(i) * R * 0.35;
+            for (int i = 1; i <= 12; i++) {
+                float d = float(i) * R * 0.12;
                 vec2 q = p + n * d;
                 float tq = dot(q, n);
                 if (tq >= a) break;
                 float toq = 2.0 * a + PI * R - tq;
-                if (inPage(q + n * (toq - tq))) sh += 0.08;
+                if (inPage(q + n * (toq - tq))) {
+                    sh = 0.32 * (1.0 - float(i) / 13.0);
+                    break;
+                }
             }
             col.rgb *= 1.0 - sh;
         }

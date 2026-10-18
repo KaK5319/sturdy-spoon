@@ -189,7 +189,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   late final AnimationController _ac = AnimationController(vsync: this);
 
   // 指に吸い付く感じの調整 ------------------------------
-  static const double _maxTilt = 1.0;     // 折り目の傾き最大(シェーダーの MAX_TILT と同じ値)
+  static const double _pull = 1.5;        // めくりの軽さ。大きいほど少ない指の動きでめくれる(1.0=指と同じ速さ)
   static const double _curlR = 0.07;      // 巻きの半径(シェーダーの R_REL と同じ値)
   static const double _stiffness = 260;   // 大きいほど素早く吸い寄せる
   static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
@@ -310,15 +310,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     });
   }
 
-  /// 指の移動量(px) → めくり量(0〜1)。折り目が指にぴったり付いてくるように換算
-  double _toProgress(double px) {
-    final ty = _tilt * _maxTilt;
-    final len = math.sqrt(1 + ty * ty);
-    final nx = 1 / len, ny = ty / len;
-    final w = _viewSize.width, h = _viewSize.height;
-    final span = w * nx + h * ny.abs() + _curlR * w;
-    return px * nx / span;
-  }
+  /// 指の移動量(px) → めくり量(0〜1)。傾きに関係なく、画面の幅だけ動かせばめくり切れる
+  double _toProgress(double px) => px / (_viewSize.width * (1 + _curlR)) * _pull;
 
   double _tiltFromY(double y) => ((y / _viewSize.height) * 2 - 1).clamp(-1.0, 1.0);
 

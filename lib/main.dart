@@ -189,19 +189,22 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   late final AnimationController _ac = AnimationController(vsync: this);
 
   // 指に吸い付く感じの調整 ------------------------------
-  static const double _k = 1.07;          // 指の移動量→めくり量(1.07で折り目が指にぴったり付いてくる)
+  static const double _maxTilt = 1.0;     // 折り目の傾き最大(シェーダーの MAX_TILT と同じ値)
+  static const double _curlR = 0.07;      // 巻きの半径(シェーダーの R_REL と同じ値)
   static const double _stiffness = 260;   // 大きいほど素早く吸い寄せる
   static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
 
   // めくりやすさの調整 ----------------------------------
-  static const double _commitAt = 0.15;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
-  static const double _flickSpeed = 150;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
+  static const double _commitAt = 0.22;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
+  static const double _flickSpeed = 250;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
 
   bool _rtl = true; // 右開き
   int _index = 0;
   int _mode = 0; // 0:停止 1:次へ -1:前へ
   double _progress = 0;
   double _acc = 0;
+  double _tilt = 0; // -1:上をつまむ 〜 +1:下をつまむ
+  Size _viewSize = Size.zero;
 
   final Map<int, ui.Image> _cache = {};
   final Set<int> _loading = {};
@@ -307,6 +310,18 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     });
   }
 
+  /// 指の移動量(px) → めくり量(0〜1)。折り目が指にぴったり付いてくるように換算
+  double _toProgress(double px) {
+    final ty = _tilt * _maxTilt;
+    final len = math.sqrt(1 + ty * ty);
+    final nx = 1 / len, ny = ty / len;
+    final w = _viewSize.width, h = _viewSize.height;
+    final span = w * nx + h * ny.abs() + _curlR * w;
+    return px * nx / span;
+  }
+
+  double _tiltFromY(double y) => ((y / _viewSize.height) * 2 - 1).clamp(-1.0, 1.0);
+
   void _flip(int dir) {
     if (_mode != 0 || _ac.isAnimating) return;
     if (dir == 1 && _index < _last) {
@@ -324,8 +339,14 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     }
   }
 
-  void _onDragUpdate(DragUpdateDetails d, double w) {
+  void _onDragStart(DragStartDetails d) {
     if (_ac.isAnimating) return;
+    _tilt = _tiltFromY(d.localPosition.dy); // つまんだ高さで折り目が傾く
+  }
+
+  void _onDragUpdate(DragUpdateDetails d) {
+    if (_ac.isAnimating) return;
+    _tilt += (_tiltFromY(d.localPosition.dy) - _tilt) * 0.12; // 指の高さにゆっくり追従
     _acc += d.delta.dx * _sgn;
     if (_mode == 0) {
       if (_acc > 8 && _index < _last) {
@@ -337,7 +358,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
       }
     }
     setState(() {
-      final a = _acc / (w * _k);
+      final a = _toProgress(_acc);
       _progress = (_mode == 1 ? a : 1 + a).clamp(0.0, 1.0);
     });
   }
@@ -347,9 +368,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
       _acc = 0;
       return;
     }
-    final w = MediaQuery.of(context).size.width;
     final v = (d.primaryVelocity ?? 0) * _sgn; // 正:次へ方向(px/秒)
-    final pv = v / (w * _k);                   // めくり量/秒
+    final pv = _toProgress(v);                 // めくり量/秒
     if (_mode == 1) {
       _settle((_progress > _commitAt || v > _flickSpeed) ? 1 : 0, pv);
     } else {
@@ -364,6 +384,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
       backgroundColor: Colors.black,
       body: LayoutBuilder(builder: (context, box) {
         final size = Size(box.maxWidth, box.maxHeight);
+        _viewSize = size;
         _sync(size, dpr);
 
         final curIdx = _mode == -1 ? _index - 1 : _index;
@@ -376,16 +397,18 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onHorizontalDragUpdate: (d) => _onDragUpdate(d, size.width),
+              onHorizontalDragStart: _onDragStart,
+              onHorizontalDragUpdate: _onDragUpdate,
               onHorizontalDragEnd: _onDragEnd,
               onTapUp: (d) {
+                _tilt = _tiltFromY(d.localPosition.dy);
                 final x = d.localPosition.dx / size.width;
                 if (x < 0.3) _flip(_rtl ? 1 : -1);
                 if (x > 0.7) _flip(_rtl ? -1 : 1);
               },
               child: ready
                   ? CustomPaint(
-                      painter: _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl))
+                      painter: _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl, _tilt))
                   : const Center(child: CircularProgressIndicator()),
             ),
           ),
@@ -421,11 +444,12 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 }
 
 class _CurlPainter extends CustomPainter {
-  _CurlPainter(this.shader, this.cur, this.next, this.progress, this.rtl);
+  _CurlPainter(this.shader, this.cur, this.next, this.progress, this.rtl, this.tilt);
   final ui.FragmentShader shader;
   final ui.Image cur, next;
   final double progress;
   final bool rtl;
+  final double tilt;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -434,6 +458,7 @@ class _CurlPainter extends CustomPainter {
       ..setFloat(1, size.height)
       ..setFloat(2, progress)
       ..setFloat(3, rtl ? 1.0 : 0.0)
+      ..setFloat(4, tilt)
       ..setImageSampler(0, cur)
       ..setImageSampler(1, next);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);

@@ -206,6 +206,19 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   double _tilt = 0; // -1:上をつまむ 〜 +1:下をつまむ
   Size _viewSize = Size.zero;
 
+  // ピンチズーム ------------------------------------------
+  static const double _maxZoom = 4.0;     // 最大の拡大率
+  static const double _doubleTapZoom = 2.5; // ダブルタップで拡大する倍率
+  double _zoom = 1.0;
+  Offset _offset = Offset.zero;
+  double _startZoom = 1.0;
+  Offset _startOffset = Offset.zero;
+  Offset _startFocal = Offset.zero;
+  bool _pinching = false;
+  DateTime _lastTap = DateTime(2000);
+  ui.Image? _hi; // 拡大用の高解像度画像
+  bool _hiLoading = false;
+
   final Map<int, ui.Image> _cache = {};
   final Set<int> _loading = {};
   Size _cacheSize = Size.zero;
@@ -223,6 +236,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
+    _hi?.dispose();
     _ac.dispose();
     for (final i in _cache.values) {
       i.dispose();
@@ -332,15 +346,80 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     }
   }
 
-  void _onDragStart(DragStartDetails d) {
-    if (_ac.isAnimating) return;
-    _tilt = _tiltFromY(d.localPosition.dy); // つまんだ高さで折り目が傾く
+  /* ---- ピンチズーム ---- */
+  Offset _clampOffset(Offset o, double z) {
+    final w = _viewSize.width, h = _viewSize.height;
+    return Offset(o.dx.clamp(w - w * z, 0.0).toDouble(), o.dy.clamp(h - h * z, 0.0).toDouble());
   }
 
-  void _onDragUpdate(DragUpdateDetails d) {
+  Future<void> _ensureHi() async {
+    if (_hi != null || _hiLoading) return;
+    _hiLoading = true;
+    final idx = _index;
+    final dpr = MediaQuery.of(context).devicePixelRatio;
+    final targetW = (_viewSize.width * dpr * 3).round();
+    try {
+      final bytes = await File(widget.book.pages[idx]).readAsBytes();
+      final codec =
+          await ui.instantiateImageCodec(bytes, targetWidth: targetW, allowUpscaling: false);
+      final img = (await codec.getNextFrame()).image;
+      if (!mounted || _zoom <= 1.001 || idx != _index) {
+        img.dispose();
+      } else {
+        setState(() => _hi = img);
+      }
+    } finally {
+      _hiLoading = false;
+    }
+  }
+
+  void _resetZoom() {
+    final old = _hi;
+    setState(() {
+      _zoom = 1.0;
+      _offset = Offset.zero;
+      _hi = null;
+    });
+    // 描画が終わってから解放する
+    WidgetsBinding.instance.addPostFrameCallback((_) => old?.dispose());
+  }
+
+  void _zoomAt(Offset p) {
+    setState(() {
+      _zoom = _doubleTapZoom;
+      _offset = _clampOffset(p - p * _doubleTapZoom, _doubleTapZoom);
+    });
+    _ensureHi();
+  }
+
+  /* ---- 1本指=めくり / 2本指=ズーム / 拡大中の1本指=移動 ---- */
+  void _onScaleStart(ScaleStartDetails d) {
+    _startZoom = _zoom;
+    _startOffset = _offset;
+    _startFocal = d.localFocalPoint;
+    _pinching = (d.pointerCount >= 2 || _zoom > 1.001) && _mode == 0 && !_ac.isAnimating;
+    if (!_pinching && !_ac.isAnimating && _mode == 0) {
+      _tilt = _tiltFromY(d.localFocalPoint.dy); // つまんだ高さで折り目が傾く
+    }
+  }
+
+  void _onScaleUpdate(ScaleUpdateDetails d) {
     if (_ac.isAnimating) return;
-    _tilt += (_tiltFromY(d.localPosition.dy) - _tilt) * 0.2; // 指の高さに追従する速さ(大きいほど素早い)
-    _acc += d.delta.dx * _sgn;
+
+    if (_pinching) {
+      final z = (_startZoom * d.scale).clamp(1.0, _maxZoom).toDouble();
+      final c = (_startFocal - _startOffset) / _startZoom; // 指の下にあるページ上の点
+      setState(() {
+        _zoom = z;
+        _offset = z <= 1.0 ? Offset.zero : _clampOffset(d.localFocalPoint - c * z, z);
+      });
+      if (z > 1.001) _ensureHi();
+      return;
+    }
+
+    if (d.pointerCount > 1) return; // めくり中に指が増えても無視
+    _tilt += (_tiltFromY(d.localFocalPoint.dy) - _tilt) * 0.2; // 指の高さに追従する速さ
+    _acc += d.focalPointDelta.dx * _sgn;
     if (_mode == 0) {
       if (_acc > 8 && _index < _last) {
         _mode = 1;
@@ -356,13 +435,18 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     });
   }
 
-  void _onDragEnd(DragEndDetails d) {
+  void _onScaleEnd(ScaleEndDetails d) {
+    if (_pinching) {
+      _pinching = false;
+      if (_zoom < 1.05) _resetZoom(); // ほぼ等倍なら元に戻す
+      return;
+    }
     if (_mode == 0) {
       _acc = 0;
       return;
     }
-    final v = (d.primaryVelocity ?? 0) * _sgn; // 正:次へ方向(px/秒)
-    final pv = _toProgress(v);                 // めくり量/秒
+    final v = d.velocity.pixelsPerSecond.dx * _sgn; // 正:次へ方向(px/秒)
+    final pv = _toProgress(v);                      // めくり量/秒
     if (_mode == 1) {
       _settle((_progress > _commitAt || v > _flickSpeed) ? 1 : 0, pv);
     } else {
@@ -390,18 +474,31 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
           Positioned.fill(
             child: GestureDetector(
               behavior: HitTestBehavior.opaque,
-              onHorizontalDragStart: _onDragStart,
-              onHorizontalDragUpdate: _onDragUpdate,
-              onHorizontalDragEnd: _onDragEnd,
+              onScaleStart: _onScaleStart,
+              onScaleUpdate: _onScaleUpdate,
+              onScaleEnd: _onScaleEnd,
               onTapUp: (d) {
-                _tilt = _tiltFromY(d.localPosition.dy);
+                final now = DateTime.now();
+                final isDouble = now.difference(_lastTap).inMilliseconds < 300;
+                _lastTap = now;
+                if (_zoom > 1.001) {
+                  if (isDouble) _resetZoom(); // 拡大中のダブルタップで等倍に戻る
+                  return;
+                }
                 final x = d.localPosition.dx / size.width;
+                if (isDouble && x >= 0.3 && x <= 0.7) {
+                  _zoomAt(d.localPosition); // 中央のダブルタップで拡大
+                  return;
+                }
+                _tilt = _tiltFromY(d.localPosition.dy);
                 if (x < 0.3) _flip(_rtl ? 1 : -1);
                 if (x > 0.7) _flip(_rtl ? -1 : 1);
               },
               child: ready
                   ? CustomPaint(
-                      painter: _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl, _tilt))
+                      painter: (_zoom > 1.001 && _mode == 0)
+                          ? _ZoomPainter(_hi ?? cur, _hi == null, _zoom, _offset)
+                          : _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl, _tilt))
                   : const Center(child: CircularProgressIndicator()),
             ),
           ),
@@ -459,4 +556,36 @@ class _CurlPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _CurlPainter old) => true;
+}
+
+
+/// 拡大表示用。高解像度画像があればそれを、無ければ画面サイズの画像を拡大して描く
+class _ZoomPainter extends CustomPainter {
+  _ZoomPainter(this.img, this.fitted, this.zoom, this.offset);
+  final ui.Image img;
+  final bool fitted; // true: 画面サイズに整形済みの画像
+  final double zoom;
+  final Offset offset;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    canvas.save();
+    canvas.translate(offset.dx, offset.dy);
+    canvas.scale(zoom);
+    final src = Rect.fromLTWH(0, 0, img.width.toDouble(), img.height.toDouble());
+    Rect dst;
+    if (fitted) {
+      dst = Offset.zero & size;
+    } else {
+      canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+      final sc = math.min(size.width / img.width, size.height / img.height);
+      final dw = img.width * sc, dh = img.height * sc;
+      dst = Rect.fromLTWH((size.width - dw) / 2, (size.height - dh) / 2, dw, dh);
+    }
+    canvas.drawImageRect(img, src, dst, Paint()..filterQuality = FilterQuality.high);
+    canvas.restore();
+  }
+
+  @override
+  bool shouldRepaint(covariant _ZoomPainter old) => true;
 }

@@ -189,14 +189,14 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   late final AnimationController _ac = AnimationController(vsync: this);
 
   // 指に吸い付く感じの調整 ------------------------------
-  static const double _pull = 1.5;        // めくりの軽さ。大きいほど少ない指の動きでめくれる(1.0=指と同じ速さ)
+  static const double _pull = 1.2;        // めくりの軽さ。小さいほど指に吸い付く(1.0=指と同じ速さ)。軽くしたいなら1.5
   static const double _curlR = 0.07;      // 巻きの半径(シェーダーの R_REL と同じ値)
-  static const double _stiffness = 260;   // 大きいほど素早く吸い寄せる
-  static const double _damping = 30;      // 小さいほど少し弾む(30前後でほぼ弾まない)
+  static const double _stiffness = 340;   // 大きいほど離した瞬間にキュッと吸い寄せる
+  static const double _damping = 34;      // 大きいほど揺れずに落ち着く
 
   // めくりやすさの調整 ----------------------------------
-  static const double _commitAt = 0.22;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
-  static const double _flickSpeed = 250;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
+  static const double _commitAt = 0.15;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
+  static const double _flickSpeed = 150;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
 
   bool _rtl = true; // 右開き
   int _index = 0;
@@ -339,7 +339,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 
   void _onDragUpdate(DragUpdateDetails d) {
     if (_ac.isAnimating) return;
-    _tilt += (_tiltFromY(d.localPosition.dy) - _tilt) * 0.12; // 指の高さにゆっくり追従
+    _tilt += (_tiltFromY(d.localPosition.dy) - _tilt) * 0.2; // 指の高さに追従する速さ(大きいほど素早い)
     _acc += d.delta.dx * _sgn;
     if (_mode == 0) {
       if (_acc > 8 && _index < _last) {

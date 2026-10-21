@@ -13,7 +13,7 @@ out vec4 fragColor;
 
 const float PI = 3.14159265;
 const float R_REL = 0.07;                    // 巻きの半径(画面幅に対する比率)
-const float MAX_TILT = 1.8;                  // 傾きの最大(1.0で約45度、1.5で約56度)
+const float MAX_TILT = 1.5;                  // 傾きの最大(1.0で約45度、1.5で約56度)
 const vec3 PAPER = vec3(1.0, 1.0, 1.0);      // 紙の裏面の色(真っ白)
 const float SEE_THROUGH = 0.42;              // 裏面に透ける絵の濃さ
 const float ROLL_DARK = 0.85;                // 巻きの一番暗い所の明るさ

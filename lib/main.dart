@@ -216,6 +216,11 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   Offset _startFocal = Offset.zero;
   bool _pinching = false;
   DateTime _lastTap = DateTime(2000);
+
+  // メニュー(中央を1回タップで表示/非表示) ---------------------
+  bool _ui = false;
+  Timer? _uiTimer;
+  int? _dragPage; // スライダーをつまんでいる間のページ番号(1始まり)
   ui.Image? _hi; // 拡大用の高解像度画像
   bool _hiLoading = false;
 
@@ -236,6 +241,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 
   @override
   void dispose() {
+    _uiTimer?.cancel();
     _hi?.dispose();
     _ac.dispose();
     for (final i in _cache.values) {
@@ -328,6 +334,20 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   double _toProgress(double px) => px / (_viewSize.width * (1 + _curlR)) * _pull;
 
   double _tiltFromY(double y) => ((y / _viewSize.height) * 2 - 1).clamp(-1.0, 1.0);
+
+  /// スライダーなどから好きなページへ移動
+  void _jumpTo(int i) {
+    if (_ac.isAnimating) return;
+    final n = i.clamp(0, _last).toInt();
+    setState(() {
+      _index = n;
+      _mode = 0;
+      _progress = 0;
+      _acc = 0;
+    });
+    widget.book.lastPage = n;
+    widget.onChanged?.call();
+  }
 
   void _flip(int dir) {
     if (_mode != 0 || _ac.isAnimating) return;
@@ -454,6 +474,89 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     }
   }
 
+  /* ---- メニュー(上のバー) ---- */
+  Widget _buildTopBar() {
+    return Positioned(
+      top: 0,
+      left: 0,
+      right: 0,
+      child: Container(
+        color: const Color(0xE6222222),
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+        child: SafeArea(
+          bottom: false,
+          child: Row(children: [
+            OutlinedButton(
+              onPressed: () => Navigator.pop(context),
+              style: OutlinedButton.styleFrom(
+                  foregroundColor: Colors.white, side: const BorderSide(color: Colors.white38)),
+              child: const Text('戻る'),
+            ),
+            Expanded(
+              child: Text(widget.book.title,
+                  textAlign: TextAlign.center,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold)),
+            ),
+            const SizedBox(width: 64),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /* ---- メニュー(下のパネル: ページ数・スライダー・左右ボタン) ---- */
+  Widget _buildBottomPanel() {
+    final total = widget.book.pages.length;
+    final shown = _dragPage ?? (_index + 1);
+    return Positioned(
+      left: 0,
+      right: 0,
+      bottom: 0,
+      child: Container(
+        color: const Color(0xE6222222),
+        padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+        child: SafeArea(
+          top: false,
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            Text('$shown / $total',
+                style: const TextStyle(color: Colors.white, fontSize: 20, fontWeight: FontWeight.w600)),
+            // 右開きのときは、スライダーも右が1ページ目になる
+            Directionality(
+              textDirection: _rtl ? TextDirection.rtl : TextDirection.ltr,
+              child: Slider(
+                min: 1,
+                max: total < 2 ? 2 : total.toDouble(),
+                divisions: total < 2 ? null : total - 1,
+                value: shown.clamp(1, total < 2 ? 2 : total).toDouble(),
+                onChanged: total < 2 ? null : (v) => setState(() => _dragPage = v.round()),
+                onChangeEnd: (v) {
+                  setState(() => _dragPage = null);
+                  _jumpTo(v.round() - 1);
+                },
+              ),
+            ),
+            Row(mainAxisAlignment: MainAxisAlignment.spaceBetween, children: [
+              // 画面の左右のタップと同じ向きに動く
+              IconButton(
+                  icon: const Icon(Icons.arrow_left, size: 40, color: Colors.white),
+                  onPressed: () => _flip(_rtl ? 1 : -1)),
+              OutlinedButton(
+                onPressed: () => setState(() => _rtl = !_rtl),
+                style: OutlinedButton.styleFrom(
+                    foregroundColor: Colors.white, side: const BorderSide(color: Colors.white38)),
+                child: Text(_rtl ? '右開き(右▶左)' : '左開き(左▶右)'),
+              ),
+              IconButton(
+                  icon: const Icon(Icons.arrow_right, size: 40, color: Colors.white),
+                  onPressed: () => _flip(_rtl ? -1 : 1)),
+            ]),
+          ]),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final dpr = MediaQuery.of(context).devicePixelRatio;
@@ -481,13 +584,25 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                 final now = DateTime.now();
                 final isDouble = now.difference(_lastTap).inMilliseconds < 300;
                 _lastTap = now;
+                final x = d.localPosition.dx / size.width;
+                final center = x >= 0.3 && x <= 0.7;
                 if (_zoom > 1.001) {
-                  if (isDouble) _resetZoom(); // 拡大中のダブルタップで等倍に戻る
+                  if (isDouble) {
+                    _uiTimer?.cancel();
+                    _resetZoom(); // 拡大中のダブルタップで等倍に戻る
+                  }
                   return;
                 }
-                final x = d.localPosition.dx / size.width;
-                if (isDouble && x >= 0.3 && x <= 0.7) {
-                  _zoomAt(d.localPosition); // 中央のダブルタップで拡大
+                if (center) {
+                  _uiTimer?.cancel();
+                  if (isDouble) {
+                    _zoomAt(d.localPosition); // 中央のダブルタップで拡大
+                  } else {
+                    // 1回タップ: ダブルタップでないと分かってからメニューを出す
+                    _uiTimer = Timer(const Duration(milliseconds: 300), () {
+                      if (mounted) setState(() => _ui = !_ui);
+                    });
+                  }
                   return;
                 }
                 _tilt = _tiltFromY(d.localPosition.dy);
@@ -502,31 +617,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   : const Center(child: CircularProgressIndicator()),
             ),
           ),
-          Positioned(
-            top: 0,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-            child: Row(children: [
-              IconButton(
-                  icon: const Icon(Icons.arrow_back, color: Colors.black54),
-                  onPressed: () => Navigator.pop(context)),
-              const Spacer(),
-              TextButton(
-                  onPressed: () => setState(() => _rtl = !_rtl),
-                  child: Text(_rtl ? '右開き' : '左開き', style: const TextStyle(color: Colors.black54))),
-            ]),
-          )),
-          Positioned(
-            bottom: 8,
-            left: 0,
-            right: 0,
-            child: SafeArea(
-              child: Text('${_index + 1} / ${_last + 1}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(color: Colors.black45, fontSize: 12)),
-            ),
-          ),
+          if (_ui) _buildTopBar(),
+          if (_ui) _buildBottomPanel(),
         ]);
       }),
     );

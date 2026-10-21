@@ -189,7 +189,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   late final AnimationController _ac = AnimationController(vsync: this);
 
   // 指に吸い付く感じの調整 ------------------------------
-  static const double _pull = 1.5;        // めくりの軽さ。小さいほど指に吸い付く(1.0=指と同じ速さ)。軽くしたいなら1.5
+  static const double _pull = 1.2;        // めくりの軽さ。小さいほど指に吸い付く(1.0=指と同じ速さ)。軽くしたいなら1.5
   static const double _curlR = 0.07;      // 巻きの半径(シェーダーの R_REL と同じ値)
   static const double _stiffness = 340;   // 大きいほど離した瞬間にキュッと吸い寄せる
   static const double _damping = 34;      // 大きいほど揺れずに落ち着く

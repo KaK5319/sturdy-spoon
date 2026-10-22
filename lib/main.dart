@@ -4,11 +4,16 @@ import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
 
+import 'package:archive/archive.dart' show ZipDecoder;
+import 'package:archive/archive_io.dart' show InputFileStream;
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/foundation.dart' show compute;
 import 'package:flutter/material.dart';
 import 'package:flutter/physics.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:pdfx/pdfx.dart' show PdfDocument, PdfPageImageFormat;
 
 void main() => runApp(const SideBooksApp());
 
@@ -37,7 +42,93 @@ class Book {
 }
 
 /// 本の保存場所: アプリ専用フォルダ/books/<id>/0000.jpg ... と books.json
+/// ファイル名の自然順(2 < 10)で並べる
+int natCompare(String a, String b) {
+  final re = RegExp(r'(\d+|\D+)');
+  final pa = re.allMatches(a.toLowerCase()).map((m) => m.group(0)!).toList();
+  final pb = re.allMatches(b.toLowerCase()).map((m) => m.group(0)!).toList();
+  for (var i = 0; i < pa.length && i < pb.length; i++) {
+    final nx = int.tryParse(pa[i]), ny = int.tryParse(pb[i]);
+    final c = (nx != null && ny != null) ? nx.compareTo(ny) : pa[i].compareTo(pb[i]);
+    if (c != 0) return c;
+  }
+  return pa.length.compareTo(pb.length);
+}
+
+bool _isImageName(String n) {
+  final l = n.toLowerCase();
+  return l.endsWith('.jpg') ||
+      l.endsWith('.jpeg') ||
+      l.endsWith('.png') ||
+      l.endsWith('.webp') ||
+      l.endsWith('.gif') ||
+      l.endsWith('.bmp');
+}
+
+/// zip / cbz を展開して、画像だけをページ順に保存する(別スレッドで実行)
+List<String> extractZip(List<String> args) {
+  final zipPath = args[0], destDir = args[1];
+  final input = InputFileStream(zipPath);
+  final archive = ZipDecoder().decodeBuffer(input);
+  final entries = archive.files
+      .where((f) => f.isFile && _isImageName(f.name) && !f.name.contains('__MACOSX'))
+      .toList()
+    ..sort((a, b) => natCompare(a.name, b.name));
+  final out = <String>[];
+  for (var i = 0; i < entries.length; i++) {
+    final name = entries[i].name;
+    final ext = name.substring(name.lastIndexOf('.')).toLowerCase();
+    final path = '$destDir/${i.toString().padLeft(4, '0')}$ext';
+    File(path).writeAsBytesSync(entries[i].content as List<int>);
+    out.add(path);
+  }
+  return out;
+}
+
 class Store {
+  /// 新しい本用のフォルダを作る
+  static Future<(String, Directory)> newBookDir() async {
+    final d = await getApplicationDocumentsDirectory();
+    final id = DateTime.now().millisecondsSinceEpoch.toString();
+    final dir = Directory('${d.path}/books/$id');
+    await dir.create(recursive: true);
+    return (id, dir);
+  }
+
+  /// PDFを1ページずつ画像にして保存する
+  static Future<List<String>> importPdf(
+      String pdfPath, Directory dir, void Function(int, int) onProgress) async {
+    final doc = await PdfDocument.openFile(pdfPath);
+    final paths = <String>[];
+    try {
+      final total = doc.pagesCount;
+      for (var i = 1; i <= total; i++) {
+        final page = await doc.getPage(i);
+        try {
+          final scale = 1600 / page.width; // 横1600pxくらいで保存
+          final img = await page.render(
+            width: page.width * scale,
+            height: page.height * scale,
+            format: PdfPageImageFormat.jpeg,
+            backgroundColor: '#FFFFFF',
+            quality: 90,
+          );
+          if (img != null) {
+            final path = '${dir.path}/${(i - 1).toString().padLeft(4, '0')}.jpg';
+            await File(path).writeAsBytes(img.bytes);
+            paths.add(path);
+          }
+        } finally {
+          await page.close();
+        }
+        onProgress(i, total);
+      }
+    } finally {
+      await doc.close();
+    }
+    return paths;
+  }
+
   static Future<File> _index() async {
     final d = await getApplicationDocumentsDirectory();
     return File('${d.path}/books.json');
@@ -95,6 +186,7 @@ class Shelf extends StatefulWidget {
 class _ShelfState extends State<Shelf> {
   final List<Book> _books = [];
   bool _busy = false;
+  String _busyText = '';
 
   @override
   void initState() {
@@ -104,15 +196,88 @@ class _ShelfState extends State<Shelf> {
     });
   }
 
-  Future<void> _import() async {
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  void _showAddMenu() {
+    showModalBottomSheet(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.photo_library),
+            title: const Text('写真から追加'),
+            onTap: () {
+              Navigator.pop(c);
+              _importImages();
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.picture_as_pdf),
+            title: const Text('PDF・zip・cbz から追加'),
+            onTap: () {
+              Navigator.pop(c);
+              _importFile();
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _importImages() async {
     final files = await ImagePicker().pickMultiImage();
     if (files.isEmpty) return;
-    files.sort((a, b) => a.name.compareTo(b.name));
-    setState(() => _busy = true);
+    files.sort((a, b) => natCompare(a.name, b.name));
+    setState(() {
+      _busy = true;
+      _busyText = '保存中…';
+    });
     final book = await Store.addBook('本 ${_books.length + 1}', files);
     _books.add(book);
     await Store.save(_books);
     if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _importFile() async {
+    final res = await FilePicker.platform.pickFiles(type: FileType.any);
+    if (res == null || res.files.isEmpty) return;
+    final f = res.files.first;
+    final path = f.path;
+    if (path == null) return _snack('ファイルを読み込めませんでした');
+    final dot = f.name.lastIndexOf('.');
+    final ext = dot < 0 ? '' : f.name.substring(dot + 1).toLowerCase();
+    final title = dot < 0 ? f.name : f.name.substring(0, dot);
+    if (!['pdf', 'cbz', 'zip'].contains(ext)) {
+      return _snack('PDF・cbz・zip のファイルを選んでください');
+    }
+
+    setState(() {
+      _busy = true;
+      _busyText = '読み込み中…';
+    });
+    final (id, dir) = await Store.newBookDir();
+    try {
+      final List<String> paths;
+      if (ext == 'pdf') {
+        paths = await Store.importPdf(path, dir, (i, n) {
+          if (mounted) setState(() => _busyText = '変換中 $i / $n ページ');
+        });
+      } else {
+        if (mounted) setState(() => _busyText = '展開中…(少し時間がかかります)');
+        paths = await compute(extractZip, [path, dir.path]);
+      }
+      if (paths.isEmpty) throw '画像が見つかりませんでした';
+      _books.add(Book(id, title, paths));
+      await Store.save(_books);
+    } catch (e) {
+      if (await dir.exists()) await dir.delete(recursive: true);
+      _snack('読み込めませんでした: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
   }
 
   Future<void> _confirmDelete(Book b) async {
@@ -137,9 +302,15 @@ class _ShelfState extends State<Shelf> {
     return Scaffold(
       appBar: AppBar(title: const Text('SideBooks')),
       body: _busy
-          ? const Center(child: CircularProgressIndicator())
+          ? Center(
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                const CircularProgressIndicator(),
+                const SizedBox(height: 16),
+                Text(_busyText),
+              ]),
+            )
           : _books.isEmpty
-          ? const Center(child: Text('画像を選んで読み始めよう'))
+          ? const Center(child: Text('写真・PDF・zip を選んで読み始めよう'))
           : GridView.builder(
               padding: const EdgeInsets.all(12),
               gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
@@ -170,7 +341,7 @@ class _ShelfState extends State<Shelf> {
               },
             ),
       floatingActionButton: FloatingActionButton.extended(
-          onPressed: _import, icon: const Icon(Icons.add), label: const Text('本を追加')),
+          onPressed: _showAddMenu, icon: const Icon(Icons.add), label: const Text('本を追加')),
     );
   }
 }

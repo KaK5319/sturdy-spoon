@@ -16,6 +16,9 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart' show PdfDocument, PdfPageImageFormat;
 import 'package:rar/rar.dart' show Rar;
 
+/// ページの外の背景色(page_curl.frag の BG と同じ明るさ)
+const Color _bg = Color(0xFF1F1F1F);
+
 void main() => runApp(const SideBooksApp());
 
 class SideBooksApp extends StatelessWidget {
@@ -440,6 +443,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   bool _hiLoading = false;
 
   final Map<int, ui.Image> _cache = {};
+  final Map<int, Rect> _rects = {}; // 各ページの大きさ(画面上の位置)。この中だけがめくれる
   final Set<int> _loading = {};
   Size _cacheSize = Size.zero;
 
@@ -473,7 +477,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     final w = size.width * dpr, h = size.height * dpr;
     final rec = ui.PictureRecorder();
     final c = Canvas(rec);
-    c.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = Colors.white);
+    c.drawRect(Rect.fromLTWH(0, 0, w, h), Paint()..color = _bg);
     final s = math.min(w / src.width, h / src.height);
     final dw = src.width * s, dh = src.height * s;
     c.drawImageRect(
@@ -484,6 +488,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
     );
     final out = await rec.endRecording().toImage(w.round(), h.round());
     src.dispose();
+    _rects[i] = Rect.fromLTWH((w - dw) / 2 / dpr, (h - dh) / 2 / dpr, dw / dpr, dh / dpr);
     return out;
   }
 
@@ -493,13 +498,17 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
         i.dispose();
       }
       _cache.clear();
+      _rects.clear();
       _loading.clear();
       _cacheSize = size;
     }
     final want = {for (var i = _index - 1; i <= _index + 1; i++) if (i >= 0 && i <= _last) i};
     _cache.removeWhere((k, v) {
       final drop = !want.contains(k);
-      if (drop) v.dispose();
+      if (drop) {
+        v.dispose();
+        _rects.remove(k);
+      }
       return drop;
     });
     for (final i in want) {
@@ -776,7 +785,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   Widget build(BuildContext context) {
     final dpr = MediaQuery.of(context).devicePixelRatio;
     return Scaffold(
-      backgroundColor: Colors.black,
+      backgroundColor: _bg,
       body: LayoutBuilder(builder: (context, box) {
         final size = Size(box.maxWidth, box.maxHeight);
         _viewSize = size;
@@ -828,7 +837,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   ? CustomPaint(
                       painter: (_zoom > 1.001 && _mode == 0)
                           ? _ZoomPainter(_hi ?? cur, _hi == null, _zoom, _offset)
-                          : _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl, _tilt))
+                          : _CurlPainter(_shader!, cur, next, _mode == 0 ? 0 : _progress, _rtl, _tilt,
+                              _rects[curIdx] ?? (Offset.zero & size), _rects[nextIdx] ?? (Offset.zero & size)))
                   : const Center(child: CircularProgressIndicator()),
             ),
           ),
@@ -841,12 +851,13 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 }
 
 class _CurlPainter extends CustomPainter {
-  _CurlPainter(this.shader, this.cur, this.next, this.progress, this.rtl, this.tilt);
+  _CurlPainter(this.shader, this.cur, this.next, this.progress, this.rtl, this.tilt, this.curRect, this.nextRect);
   final ui.FragmentShader shader;
   final ui.Image cur, next;
   final double progress;
   final bool rtl;
   final double tilt;
+  final Rect curRect, nextRect;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -856,6 +867,14 @@ class _CurlPainter extends CustomPainter {
       ..setFloat(2, progress)
       ..setFloat(3, rtl ? 1.0 : 0.0)
       ..setFloat(4, tilt)
+      ..setFloat(5, curRect.left)
+      ..setFloat(6, curRect.top)
+      ..setFloat(7, curRect.width)
+      ..setFloat(8, curRect.height)
+      ..setFloat(9, nextRect.left)
+      ..setFloat(10, nextRect.top)
+      ..setFloat(11, nextRect.width)
+      ..setFloat(12, nextRect.height)
       ..setImageSampler(0, cur)
       ..setImageSampler(1, next);
     canvas.drawRect(Offset.zero & size, Paint()..shader = shader);
@@ -884,7 +903,7 @@ class _ZoomPainter extends CustomPainter {
     if (fitted) {
       dst = Offset.zero & size;
     } else {
-      canvas.drawRect(Offset.zero & size, Paint()..color = Colors.white);
+      canvas.drawRect(Offset.zero & size, Paint()..color = _bg);
       final sc = math.min(size.width / img.width, size.height / img.height);
       final dw = img.width * sc, dh = img.height * sc;
       dst = Rect.fromLTWH((size.width - dw) / 2, (size.height - dh) / 2, dw, dh);

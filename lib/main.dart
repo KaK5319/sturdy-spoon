@@ -638,6 +638,8 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
 
   /* ---- 1本指=めくり / 2本指=ズーム / 拡大中の1本指=移動 ---- */
   void _onScaleStart(ScaleStartDetails d) {
+    _uiTimer?.cancel();
+    if (_ui) setState(() => _ui = false); // めくり・拡大を始めたらメニューを消す
     _startZoom = _zoom;
     _startOffset = _offset;
     _startFocal = d.localFocalPoint;
@@ -830,6 +832,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   return;
                 }
                 _tilt = _tiltFromY(d.localPosition.dy);
+                if (_ui) setState(() => _ui = false); // 端をタップしてめくるときもメニューを消す
                 if (x < 0.3) _flip(_rtl ? 1 : -1);
                 if (x > 0.7) _flip(_rtl ? -1 : 1);
               },

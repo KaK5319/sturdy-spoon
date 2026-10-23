@@ -35,7 +35,7 @@ class SideBooksApp extends StatelessWidget {
 class Book {
   Book(this.id, this.title, this.pages, [this.lastPage = 0]);
   final String id;
-  final String title;
+  String title; // 本棚で名前を変えられる
   final List<String> pages; // アプリ内に保存した画像のパス
   int lastPage;
   bool rtl = false; // この本の開き方(true=右開き / false=左開き)。最初は左開き
@@ -329,6 +329,55 @@ class _ShelfState extends State<Shelf> {
     }
   }
 
+  void _showBookMenu(Book b) {
+    showModalBottomSheet(
+      context: context,
+      builder: (c) => SafeArea(
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          ListTile(
+            leading: const Icon(Icons.edit),
+            title: const Text('名前を変更'),
+            onTap: () {
+              Navigator.pop(c);
+              _rename(b);
+            },
+          ),
+          ListTile(
+            leading: const Icon(Icons.delete_outline),
+            title: const Text('削除'),
+            onTap: () {
+              Navigator.pop(c);
+              _confirmDelete(b);
+            },
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Future<void> _rename(Book b) async {
+    final ctrl = TextEditingController(text: b.title);
+    final name = await showDialog<String>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: const Text('本の名前を変更'),
+        content: TextField(
+          controller: ctrl,
+          autofocus: true,
+          decoration: const InputDecoration(hintText: '本の名前'),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(c), child: const Text('やめる')),
+          TextButton(onPressed: () => Navigator.pop(c, ctrl.text.trim()), child: const Text('保存')),
+        ],
+      ),
+    );
+    ctrl.dispose();
+    if (name == null || name.isEmpty) return;
+    setState(() => b.title = name);
+    await Store.save(_books);
+  }
+
   Future<void> _confirmDelete(Book b) async {
     final ok = await showDialog<bool>(
       context: context,
@@ -368,7 +417,7 @@ class _ShelfState extends State<Shelf> {
               itemBuilder: (_, i) {
                 final b = _books[i];
                 return GestureDetector(
-                  onLongPress: () => _confirmDelete(b),
+                  onLongPress: () => _showBookMenu(b),
                   onTap: () => Navigator.push(
                       context,
                       MaterialPageRoute(
@@ -382,7 +431,7 @@ class _ShelfState extends State<Shelf> {
                       ),
                     ),
                     const SizedBox(height: 6),
-                    Text(b.title),
+                    Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
                     Text('${b.pages.length}ページ ・ ${b.lastPage + 1}ページ目まで',
                         style: const TextStyle(fontSize: 12, color: Colors.grey)),
                   ]),

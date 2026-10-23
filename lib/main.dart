@@ -14,6 +14,7 @@ import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdfx/pdfx.dart' show PdfDocument, PdfPageImageFormat;
+import 'package:rar/rar.dart' show Rar;
 
 void main() => runApp(const SideBooksApp());
 
@@ -83,6 +84,37 @@ List<String> extractZip(List<String> args) {
     out.add(path);
   }
   return out;
+}
+
+/// 展開済みフォルダの中から画像だけを集め、ページ順に番号を振って移す(別スレッドで実行)
+List<String> collectImages(List<String> args) {
+  final srcDir = args[0], destDir = args[1];
+  final files = Directory(srcDir)
+      .listSync(recursive: true)
+      .whereType<File>()
+      .where((f) => _isImageName(f.path) && !f.path.contains('__MACOSX'))
+      .toList()
+    ..sort((a, b) => natCompare(a.path, b.path));
+  final out = <String>[];
+  for (var i = 0; i < files.length; i++) {
+    final name = files[i].path;
+    final ext = name.substring(name.lastIndexOf('.')).toLowerCase();
+    final path = '$destDir/${i.toString().padLeft(4, '0')}$ext';
+    files[i].renameSync(path);
+    out.add(path);
+  }
+  return out;
+}
+
+/// ファイルの先頭を見て、本当の形式を調べる(拡張子が違っていても読めるように)
+Future<String> sniffKind(String path) async {
+  final raf = await File(path).open();
+  final h = await raf.read(8);
+  await raf.close();
+  if (h.length >= 4 && h[0] == 0x50 && h[1] == 0x4B) return 'zip'; // PK
+  if (h.length >= 4 && h[0] == 0x52 && h[1] == 0x61 && h[2] == 0x72 && h[3] == 0x21) return 'rar'; // Rar!
+  if (h.length >= 4 && h[0] == 0x25 && h[1] == 0x50 && h[2] == 0x44 && h[3] == 0x46) return 'pdf'; // %PDF
+  return 'unknown';
 }
 
 class Store {
@@ -216,7 +248,7 @@ class _ShelfState extends State<Shelf> {
           ),
           ListTile(
             leading: const Icon(Icons.picture_as_pdf),
-            title: const Text('PDF・zip・cbz から追加'),
+            title: const Text('PDF・zip・cbz・rar・cbr から追加'),
             onTap: () {
               Navigator.pop(c);
               _importFile();
@@ -250,8 +282,8 @@ class _ShelfState extends State<Shelf> {
     final dot = f.name.lastIndexOf('.');
     final ext = dot < 0 ? '' : f.name.substring(dot + 1).toLowerCase();
     final title = dot < 0 ? f.name : f.name.substring(0, dot);
-    if (!['pdf', 'cbz', 'zip'].contains(ext)) {
-      return _snack('PDF・cbz・zip のファイルを選んでください');
+    if (!['pdf', 'cbz', 'zip', 'rar', 'cbr'].contains(ext)) {
+      return _snack('PDF・zip・cbz・rar・cbr のファイルを選んでください');
     }
 
     setState(() {
@@ -260,11 +292,23 @@ class _ShelfState extends State<Shelf> {
     });
     final (id, dir) = await Store.newBookDir();
     try {
+      // 拡張子ではなく、中身で形式を判断する(.cbr でも実はzipということが多い)
+      var kind = await sniffKind(path);
+      if (kind == 'unknown') kind = (ext == 'pdf') ? 'pdf' : ((ext == 'rar' || ext == 'cbr') ? 'rar' : 'zip');
+
       final List<String> paths;
-      if (ext == 'pdf') {
+      if (kind == 'pdf') {
         paths = await Store.importPdf(path, dir, (i, n) {
           if (mounted) setState(() => _busyText = '変換中 $i / $n ページ');
         });
+      } else if (kind == 'rar') {
+        if (mounted) setState(() => _busyText = 'RARを展開中…(少し時間がかかります)');
+        final tmp = Directory('${dir.path}/_rar');
+        await tmp.create(recursive: true);
+        final r = await Rar.extractRarFile(rarFilePath: path, destinationPath: tmp.path);
+        if (r['success'] != true) throw (r['message'] ?? 'RARを展開できませんでした');
+        paths = await compute(collectImages, [tmp.path, dir.path]);
+        if (await tmp.exists()) await tmp.delete(recursive: true);
       } else {
         if (mounted) setState(() => _busyText = '展開中…(少し時間がかかります)');
         paths = await compute(extractZip, [path, dir.path]);

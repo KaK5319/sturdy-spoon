@@ -356,23 +356,10 @@ class _ShelfState extends State<Shelf> {
   }
 
   Future<void> _rename(Book b) async {
-    final ctrl = TextEditingController(text: b.title);
     final name = await showDialog<String>(
       context: context,
-      builder: (c) => AlertDialog(
-        title: const Text('本の名前を変更'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          decoration: const InputDecoration(hintText: '本の名前'),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(c), child: const Text('やめる')),
-          TextButton(onPressed: () => Navigator.pop(c, ctrl.text.trim()), child: const Text('保存')),
-        ],
-      ),
+      builder: (c) => _RenameDialog(initial: b.title),
     );
-    ctrl.dispose();
     if (name == null || name.isEmpty) return;
     setState(() => b.title = name);
     await Store.save(_books);
@@ -972,4 +959,40 @@ class _ZoomPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _ZoomPainter old) => true;
+}
+
+
+/// 名前の変更ダイアログ(入力欄は、このダイアログが閉じるときに片付ける)
+class _RenameDialog extends StatefulWidget {
+  const _RenameDialog({required this.initial});
+  final String initial;
+  @override
+  State<_RenameDialog> createState() => _RenameDialogState();
+}
+
+class _RenameDialogState extends State<_RenameDialog> {
+  late final TextEditingController _ctrl = TextEditingController(text: widget.initial);
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('本の名前を変更'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(hintText: '本の名前'),
+        onSubmitted: (v) => Navigator.pop(context, v.trim()),
+      ),
+      actions: [
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('やめる')),
+        TextButton(onPressed: () => Navigator.pop(context, _ctrl.text.trim()), child: const Text('保存')),
+      ],
+    );
+  }
 }

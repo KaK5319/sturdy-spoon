@@ -38,11 +38,13 @@ class Book {
   final String title;
   final List<String> pages; // アプリ内に保存した画像のパス
   int lastPage;
+  bool rtl = false; // この本の開き方(true=右開き / false=左開き)。最初は左開き
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'title': title, 'pages': pages, 'lastPage': lastPage};
+      {'id': id, 'title': title, 'pages': pages, 'lastPage': lastPage, 'rtl': rtl};
   factory Book.fromJson(Map<String, dynamic> j) =>
-      Book(j['id'], j['title'], List<String>.from(j['pages']), j['lastPage'] ?? 0);
+      Book(j['id'], j['title'], List<String>.from(j['pages']), j['lastPage'] ?? 0)
+        ..rtl = j['rtl'] ?? false;
 }
 
 /// 本の保存場所: アプリ専用フォルダ/books/<id>/0000.jpg ... と books.json
@@ -416,7 +418,7 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
   static const double _commitAt = 0.15;   // ここまで動かして離せばめくれる(小さいほど軽い。0.5だと半分まで)
   static const double _flickSpeed = 150;  // 軽く払う速さ(px/秒)。小さいほど軽い払いでめくれる
 
-  bool _rtl = true; // 右開き
+  late bool _rtl = widget.book.rtl; // この本で最後に選んだ開き方(初めては左開き)
   int _index = 0;
   int _mode = 0; // 0:停止 1:次へ -1:前へ
   double _progress = 0;
@@ -768,7 +770,11 @@ class _ReaderState extends State<Reader> with SingleTickerProviderStateMixin {
                   icon: const Icon(Icons.arrow_left, size: 40, color: Colors.white),
                   onPressed: () => _flip(_rtl ? 1 : -1)),
               OutlinedButton(
-                onPressed: () => setState(() => _rtl = !_rtl),
+                onPressed: () {
+                  setState(() => _rtl = !_rtl);
+                  widget.book.rtl = _rtl; // 次に開いたときも同じ向きになる
+                  widget.onChanged?.call();
+                },
                 style: OutlinedButton.styleFrom(
                     foregroundColor: Colors.white, side: const BorderSide(color: Colors.white38)),
                 child: Text(_rtl ? '右開き(右▶左)' : '左開き(左▶右)'),

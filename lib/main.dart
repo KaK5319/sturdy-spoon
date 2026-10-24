@@ -185,6 +185,27 @@ class Store {
     }
   }
 
+  static Future<File> _colsFile() async {
+    final d = await getApplicationDocumentsDirectory();
+    return File('${d.path}/shelf_cols.txt');
+  }
+
+  static Future<int?> loadCols() async {
+    try {
+      final f = await _colsFile();
+      if (!await f.exists()) return null;
+      return int.tryParse((await f.readAsString()).trim());
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static Future<void> saveCols(int n) async {
+    try {
+      await (await _colsFile()).writeAsString('$n');
+    } catch (_) {}
+  }
+
   static Future<void> save(List<Book> books) async {
     final f = await _index();
     await f.writeAsString(jsonEncode(books.map((b) => b.toJson()).toList()));
@@ -225,11 +246,23 @@ class _ShelfState extends State<Shelf> {
   bool _busy = false;
   String _busyText = '';
 
+  // 本棚: 2本指で広げる/つまむと、1段に並ぶ本の数が変わる ----------------
+  static const bool _spreadMakesMore = true; // true: 広げると増える / false: 広げると大きくなる(減る)
+  static const int _minCols = 1, _maxCols = 5;
+  int _cols = 3;
+  final Map<int, Offset> _ptrs = {};
+  double? _pinchStartDist;
+  int _pinchStartCols = 3;
+  bool _pinching = false;
+
   @override
   void initState() {
     super.initState();
     Store.load().then((l) {
       if (mounted) setState(() => _books.addAll(l));
+    });
+    Store.loadCols().then((c) {
+      if (c != null && mounted) setState(() => _cols = c.clamp(_minCols, _maxCols).toInt());
     });
   }
 
@@ -382,6 +415,133 @@ class _ShelfState extends State<Shelf> {
     await Store.save(_books);
   }
 
+  double _dist() {
+    final v = _ptrs.values.toList();
+    return (v[0] - v[1]).distance;
+  }
+
+  void _onPtrDown(PointerDownEvent e) {
+    _ptrs[e.pointer] = e.position;
+    if (_ptrs.length == 2) {
+      _pinchStartDist = _dist();
+      _pinchStartCols = _cols;
+      setState(() => _pinching = true); // 2本指の間は、棚が勝手に動かないようにする
+    }
+  }
+
+  void _onPtrMove(PointerMoveEvent e) {
+    if (!_ptrs.containsKey(e.pointer)) return;
+    _ptrs[e.pointer] = e.position;
+    final d0 = _pinchStartDist;
+    if (_ptrs.length == 2 && d0 != null && d0 > 0) {
+      final r = _dist() / d0; // >1: 広げた / <1: つまんだ
+      final f = _spreadMakesMore ? r : 1 / r;
+      final nc = (_pinchStartCols * f).round().clamp(_minCols, _maxCols).toInt();
+      if (nc != _cols) setState(() => _cols = nc);
+    }
+  }
+
+  void _onPtrUp(PointerEvent e) {
+    _ptrs.remove(e.pointer);
+    if (_ptrs.length < 2 && _pinching) {
+      _pinchStartDist = null;
+      setState(() => _pinching = false);
+      Store.saveCols(_cols);
+    }
+  }
+
+  /// 本棚の1冊分(表紙・タイトル・読んだ進捗)
+  Widget _bookCell(Book b) {
+    final titleSize = _cols <= 1 ? 20.0 : (_cols == 2 ? 15.0 : (_cols == 3 ? 12.0 : 10.0));
+    final progress = b.pages.isEmpty ? 0.0 : (b.lastPage + 1) / b.pages.length;
+    return GestureDetector(
+      onLongPress: () => _showBookMenu(b),
+      onTap: () => Navigator.push(
+          context,
+          MaterialPageRoute(builder: (_) => Reader(book: b, onChanged: () => Store.save(_books)))
+        ).then((_) => setState(() {})), // 戻ったら進捗を更新
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
+        child: AspectRatio(
+          aspectRatio: 0.7,
+          child: Stack(alignment: Alignment.bottomCenter, children: [
+            Positioned.fill(
+              child: Image.file(File(b.pages.first),
+                  fit: BoxFit.cover, alignment: Alignment.topCenter, cacheWidth: 700),
+            ),
+            Positioned(
+              left: 0,
+              right: 0,
+              bottom: 0,
+              child: Container(
+                color: const Color(0xAA000000),
+                padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  Text(b.title,
+                      maxLines: 2,
+                      textAlign: TextAlign.center,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(color: Colors.white, fontSize: titleSize)),
+                  const SizedBox(height: 3),
+                  LinearProgressIndicator(
+                    value: progress.clamp(0.0, 1.0),
+                    minHeight: 3,
+                    backgroundColor: Colors.white24,
+                  ),
+                ]),
+              ),
+            ),
+          ]),
+        ),
+      ),
+    );
+  }
+
+  /// 木の棚の見た目で、1段ずつ並べる
+  Widget _shelf() {
+    final rows = (_books.length / _cols).ceil();
+    final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
+    return Container(
+      color: const Color(0xFF7A4A1E),
+      child: ListView.builder(
+        physics: _pinching ? const NeverScrollableScrollPhysics() : null,
+        padding: const EdgeInsets.only(bottom: 90),
+        itemCount: rowCount,
+        itemBuilder: (_, r) {
+          final cells = <Widget>[];
+          for (var c = 0; c < _cols; c++) {
+            final i = r * _cols + c;
+            cells.add(Expanded(child: i < _books.length ? _bookCell(_books[i]) : const SizedBox()));
+          }
+          return Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topCenter,
+                end: Alignment.bottomCenter,
+                colors: [Color(0xFF8A5624), Color(0xFF6E4119)],
+              ),
+            ),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Row(crossAxisAlignment: CrossAxisAlignment.end, children: cells),
+              // 棚板
+              Container(
+                height: 16,
+                decoration: const BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFFC98A4B), Color(0xFF8B5A2B)],
+                  ),
+                       border: Border(bottom: BorderSide(color: Color(0xFF3E2410), width: 3)),
+                ),
+              ),
+            ]),
+          );
+        },
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -396,34 +556,12 @@ class _ShelfState extends State<Shelf> {
             )
           : _books.isEmpty
           ? const Center(child: Text('写真・PDF・zip を選んで読み始めよう'))
-          : GridView.builder(
-              padding: const EdgeInsets.all(12),
-              gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                  crossAxisCount: 2, childAspectRatio: 0.62, crossAxisSpacing: 12, mainAxisSpacing: 12),
-              itemCount: _books.length,
-              itemBuilder: (_, i) {
-                final b = _books[i];
-                return GestureDetector(
-                  onLongPress: () => _showBookMenu(b),
-                  onTap: () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (_) => Reader(book: b, onChanged: () => Store.save(_books)))),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                    Expanded(
-                      child: ClipRRect(
-                        borderRadius: BorderRadius.circular(4),
-                        child: Image.file(File(b.pages.first),
-                            fit: BoxFit.cover, width: double.infinity, cacheWidth: 400),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
-                    Text('${b.pages.length}ページ ・ ${b.lastPage + 1}ページ目まで',
-                        style: const TextStyle(fontSize: 12, color: Colors.grey)),
-                  ]),
-                );
-              },
+          : Listener(
+              onPointerDown: _onPtrDown,
+              onPointerMove: _onPtrMove,
+              onPointerUp: _onPtrUp,
+              onPointerCancel: _onPtrUp,
+              child: _shelf(),
             ),
       floatingActionButton: FloatingActionButton.extended(
           onPressed: _showAddMenu, icon: const Icon(Icons.add), label: const Text('本を追加')),
@@ -995,4 +1133,4 @@ class _RenameDialogState extends State<_RenameDialog> {
       ],
     );
   }
-}
+}             

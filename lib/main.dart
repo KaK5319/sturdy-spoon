@@ -532,7 +532,7 @@ class _ShelfState extends State<Shelf> {
                     end: Alignment.bottomCenter,
                     colors: [Color(0xFFC98A4B), Color(0xFF8B5A2B)],
                   ),
-                       border: Border(bottom: BorderSide(color: Color(0xFF3E2410), width: 3)),
+                  border: Border(bottom: BorderSide(color: Color(0xFF3E2410), width: 3)),
                 ),
               ),
             ]),
@@ -1133,4 +1133,4 @@ class _RenameDialogState extends State<_RenameDialog> {
       ],
     );
   }
-}             
+}

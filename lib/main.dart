@@ -241,7 +241,7 @@ class Shelf extends StatefulWidget {
   State<Shelf> createState() => _ShelfState();
 }
 
-class _ShelfState extends State<Shelf> {
+class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
   final List<Book> _books = [];
   bool _busy = false;
   String _busyText = '';
@@ -249,11 +249,19 @@ class _ShelfState extends State<Shelf> {
   // 本棚: 2本指で広げる/つまむと、1段に並ぶ本の数が変わる ----------------
   static const bool _spreadMakesMore = true; // true: 広げると増える / false: 広げると大きくなる(減る)
   static const int _minCols = 1, _maxCols = 5;
-  int _cols = 3;
+  double _colsF = 3; // 1段に並ぶ本の数(なめらかに変わる)
   final Map<int, Offset> _ptrs = {};
   double? _pinchStartDist;
-  int _pinchStartCols = 3;
+  double _pinchStartF = 3;
   bool _pinching = false;
+  late final AnimationController _snap =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 280));
+
+  @override
+  void dispose() {
+    _snap.dispose();
+    super.dispose();
+  }
 
   @override
   void initState() {
@@ -262,7 +270,7 @@ class _ShelfState extends State<Shelf> {
       if (mounted) setState(() => _books.addAll(l));
     });
     Store.loadCols().then((c) {
-      if (c != null && mounted) setState(() => _cols = c.clamp(_minCols, _maxCols).toInt());
+      if (c != null && mounted) setState(() => _colsF = c.clamp(_minCols, _maxCols).toDouble());
     });
   }
 
@@ -423,8 +431,9 @@ class _ShelfState extends State<Shelf> {
   void _onPtrDown(PointerDownEvent e) {
     _ptrs[e.pointer] = e.position;
     if (_ptrs.length == 2) {
+      _snap.stop();
       _pinchStartDist = _dist();
-      _pinchStartCols = _cols;
+      _pinchStartF = _colsF;
       setState(() => _pinching = true); // 2本指の間は、棚が勝手に動かないようにする
     }
   }
@@ -436,8 +445,9 @@ class _ShelfState extends State<Shelf> {
     if (_ptrs.length == 2 && d0 != null && d0 > 0) {
       final r = _dist() / d0; // >1: 広げた / <1: つまんだ
       final f = _spreadMakesMore ? r : 1 / r;
-      final nc = (_pinchStartCols * f).round().clamp(_minCols, _maxCols).toInt();
-      if (nc != _cols) setState(() => _cols = nc);
+      final target = (_pinchStartF * f).clamp(_minCols.toDouble(), _maxCols.toDouble()).toDouble();
+      // 指の動きに少し遅れて追いかけるので、やわらかく大きさが変わる
+      setState(() => _colsF += (target - _colsF) * 0.35);
     }
   }
 
@@ -446,13 +456,24 @@ class _ShelfState extends State<Shelf> {
     if (_ptrs.length < 2 && _pinching) {
       _pinchStartDist = null;
       setState(() => _pinching = false);
-      Store.saveCols(_cols);
+      // 手を離したら、ちょうどいい列数へ、ふわっと吸い寄せる
+      final from = _colsF;
+      final to = _colsF.round().clamp(_minCols, _maxCols).toDouble();
+      final tween = Tween<double>(begin: from, end: to).chain(CurveTween(curve: Curves.easeOutCubic));
+      void tick() => setState(() => _colsF = tween.evaluate(_snap));
+      _snap
+        ..reset()
+        ..addListener(tick);
+      _snap.forward().whenComplete(() {
+        _snap.removeListener(tick);
+        Store.saveCols(to.round());
+      });
     }
   }
 
   /// 本棚の1冊分(表紙・タイトル・読んだ進捗)
   Widget _bookCell(Book b) {
-    final titleSize = _cols <= 1 ? 20.0 : (_cols == 2 ? 15.0 : (_cols == 3 ? 12.0 : 10.0));
+    final titleSize = (22 / (_colsF + 0.4)).clamp(9.0, 20.0).toDouble();
     final progress = b.pages.isEmpty ? 0.0 : (b.lastPage + 1) / b.pages.length;
     return GestureDetector(
       onLongPress: () => _showBookMenu(b),
@@ -464,88 +485,200 @@ class _ShelfState extends State<Shelf> {
         padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
         child: AspectRatio(
           aspectRatio: 0.7,
-          child: Stack(alignment: Alignment.bottomCenter, children: [
-            Positioned.fill(
-              child: Image.file(File(b.pages.first),
-                  fit: BoxFit.cover, alignment: Alignment.topCenter, cacheWidth: 700),
+          child: DecoratedBox(
+            decoration: const BoxDecoration(
+              boxShadow: [
+                BoxShadow(color: Color(0x99000000), blurRadius: 14, offset: Offset(5, 7)),
+              ],
             ),
-            Positioned(
-              left: 0,
-              right: 0,
-              bottom: 0,
-              child: Container(
-                color: const Color(0xAA000000),
-                padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Text(b.title,
-                      maxLines: 2,
-                      textAlign: TextAlign.center,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(color: Colors.white, fontSize: titleSize)),
-                  const SizedBox(height: 3),
-                  LinearProgressIndicator(
-                    value: progress.clamp(0.0, 1.0),
-                    minHeight: 3,
-                    backgroundColor: Colors.white24,
-                  ),
-                ]),
+            child: Stack(alignment: Alignment.bottomCenter, children: [
+              Positioned.fill(
+                child: Image.file(File(b.pages.first),
+                    fit: BoxFit.cover, alignment: Alignment.topCenter, cacheWidth: 700),
               ),
-            ),
-          ]),
+              // 表紙の左の縁にうっすら光(本の背のふくらみ)
+              Positioned.fill(
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [Colors.white.withOpacity(0.22), Colors.transparent, Colors.black.withOpacity(0.18)],
+                      stops: const [0.0, 0.12, 1.0],
+                    ),
+                  ),
+                ),
+              ),
+              Positioned(
+                left: 0,
+                right: 0,
+                bottom: 0,
+                child: Container(
+                  color: const Color(0xAA000000),
+                  padding: const EdgeInsets.fromLTRB(4, 3, 4, 3),
+                  child: Column(mainAxisSize: MainAxisSize.min, children: [
+                    Text(b.title,
+                        maxLines: 2,
+                        textAlign: TextAlign.center,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(color: Colors.white, fontSize: titleSize)),
+                    const SizedBox(height: 3),
+                    LinearProgressIndicator(
+                      value: progress.clamp(0.0, 1.0),
+                      minHeight: 3,
+                      backgroundColor: Colors.white24,
+                    ),
+                  ]),
+                ),
+              ),
+            ]),
+          ),
         ),
       ),
     );
   }
 
-  /// 木の棚の見た目で、1段ずつ並べる
-  Widget _shelf() {
-    final rows = (_books.length / _cols).ceil();
-    final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
-    return Container(
-      color: const Color(0xFF7A4A1E),
-      child: ListView.builder(
-        physics: _pinching ? const NeverScrollableScrollPhysics() : null,
-        padding: const EdgeInsets.only(bottom: 90),
-        itemCount: rowCount,
-        itemBuilder: (_, r) {
-          final cells = <Widget>[];
-          for (var c = 0; c < _cols; c++) {
-            final i = r * _cols + c;
-            cells.add(Expanded(child: i < _books.length ? _bookCell(_books[i]) : const SizedBox()));
-          }
-          return Container(
-            decoration: const BoxDecoration(
+  /// 棚板(上の面・手前の面・影)
+  Widget _board() {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      Container(
+        height: 8,
+        decoration: const BoxDecoration(
+          gradient: LinearGradient(
+            begin: Alignment.topCenter,
+            end: Alignment.bottomCenter,
+            colors: [Color(0xFFE6B97D), Color(0xFFB98445)],
+          ),
+        ),
+      ),
+      SizedBox(
+        height: 18,
+        child: Stack(fit: StackFit.expand, children: [
+          const DecoratedBox(
+            decoration: BoxDecoration(
               gradient: LinearGradient(
                 begin: Alignment.topCenter,
                 end: Alignment.bottomCenter,
-                colors: [Color(0xFF8A5624), Color(0xFF6E4119)],
+                colors: [Color(0xFF9C6532), Color(0xFF5B3716)],
               ),
             ),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              Row(crossAxisAlignment: CrossAxisAlignment.end, children: cells),
-              // 棚板
-              Container(
-                height: 16,
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Color(0xFFC98A4B), Color(0xFF8B5A2B)],
-                  ),
-                  border: Border(bottom: BorderSide(color: Color(0xFF3E2410), width: 3)),
-                ),
-              ),
-            ]),
-          );
-        },
+          ),
+          CustomPaint(painter: _WoodPainter(7, horizontal: true, strength: 0.22)),
+        ]),
       ),
-    );
+      Container(height: 3, color: const Color(0xFF241408)),
+    ]);
+  }
+
+  /// 木の棚の見た目で、1段ずつ並べる
+  Widget _shelf() {
+    const frame = 14.0; // 左右の枠の太さ
+    return LayoutBuilder(builder: (context, box) {
+      final inner = box.maxWidth - frame * 2;
+      final n = _colsF.floor().clamp(1, 99).toInt(); // 1段の冊数
+      final cellW = inner / _colsF; // 本1冊の幅(なめらかに変わる)
+      final rowH = cellW / 0.7 + 10;
+      final rows = (_books.length / n).ceil();
+      final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
+
+      return Stack(children: [
+        Container(color: const Color(0xFF2A1809)),
+        ListView.builder(
+          physics: _pinching ? const NeverScrollableScrollPhysics() : null,
+          padding: const EdgeInsets.only(bottom: 100),
+          itemCount: rowCount,
+          itemBuilder: (_, r) {
+            final cells = <Widget>[];
+            for (var c = 0; c < n; c++) {
+              final i = r * n + c;
+              cells.add(SizedBox(width: cellW, child: i < _books.length ? _bookCell(_books[i]) : null));
+            }
+            return Column(mainAxisSize: MainAxisSize.min, children: [
+              Stack(children: [
+                // 棚の奥の板(縦の木目)
+                Positioned.fill(
+                  child: Stack(fit: StackFit.expand, children: [
+                    const DecoratedBox(
+                      decoration: BoxDecoration(
+                        gradient: LinearGradient(
+                          begin: Alignment.topCenter,
+                          end: Alignment.bottomCenter,
+                          colors: [Color(0xFF4A2D14), Color(0xFF7A4B20)],
+                        ),
+                      ),
+                    ),
+                    CustomPaint(painter: _WoodPainter(r + 1, strength: 0.16)),
+                  ]),
+                ),
+                // 上の棚板が落とす影
+                Positioned(
+                  top: 0,
+                  left: 0,
+                  right: 0,
+                  height: 36,
+                  child: DecoratedBox(
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                        colors: [Colors.black.withOpacity(0.6), Colors.transparent],
+                      ),
+                    ),
+                  ),
+                ),
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: frame),
+                  child: SizedBox(
+                    height: rowH,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: cells,
+                    ),
+                  ),
+                ),
+              ]),
+              _board(),
+            ]);
+          },
+        ),
+        // 左右の枠
+        Positioned(
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: frame,
+          child: const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF1C0F05), Color(0xFF5E3815)]),
+              ),
+            ),
+          ),
+        ),
+        Positioned(
+          right: 0,
+          top: 0,
+          bottom: 0,
+          width: frame,
+          child: const IgnorePointer(
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(colors: [Color(0xFF5E3815), Color(0xFF1C0F05)]),
+              ),
+            ),
+          ),
+        ),
+      ]);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('SideBooks')),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1C0F05),
+        title: const Text('SideBooks',
+            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Color(0xFFF1D9B5))),
+      ),
       body: _busy
           ? Center(
               child: Column(mainAxisSize: MainAxisSize.min, children: [
@@ -1133,4 +1266,37 @@ class _RenameDialogState extends State<_RenameDialog> {
       ],
     );
   }
+}
+
+
+/// 木目を描く(縦または横の細い線を、決まった乱数でばらまく)
+class _WoodPainter extends CustomPainter {
+  _WoodPainter(this.seed, {this.horizontal = false, this.strength = 0.2});
+  final int seed;
+  final bool horizontal;
+  final double strength;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final rnd = math.Random(seed);
+    final p = Paint();
+    final count = horizontal ? (size.height / 2.5).round() : (size.width / 5).round();
+    for (var i = 0; i < count; i++) {
+      final pos = rnd.nextDouble() * (horizontal ? size.height : size.width);
+      final dark = rnd.nextBool();
+      final op = rnd.nextDouble() * strength;
+      p
+        ..color = dark ? Color.fromRGBO(0, 0, 0, op) : Color.fromRGBO(255, 220, 170, op * 0.6)
+        ..strokeWidth = 0.6 + rnd.nextDouble() * 1.6;
+      final wobble = (rnd.nextDouble() - 0.5) * 8;
+      if (horizontal) {
+        canvas.drawLine(Offset(0, pos), Offset(size.width, pos + wobble * 0.3), p);
+      } else {
+        canvas.drawLine(Offset(pos, 0), Offset(pos + wobble, size.height), p);
+      }
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _WoodPainter old) => false;
 }

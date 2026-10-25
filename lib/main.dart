@@ -249,6 +249,7 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
   // 本棚: 2本指で広げる/つまむと、1段に並ぶ本の数が変わる ----------------
   static const bool _spreadMakesMore = true; // true: 広げると増える / false: 広げると大きくなる(減る)
   static const int _minCols = 1, _maxCols = 5;
+  static const double _pinchGain = 1.5; // 大きいほど、少し広げただけで大きく変わる
   double _colsF = 3; // 1段に並ぶ本の数(なめらかに変わる)
   final Map<int, Offset> _ptrs = {};
   double? _pinchStartDist;
@@ -444,7 +445,7 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     final d0 = _pinchStartDist;
     if (_ptrs.length == 2 && d0 != null && d0 > 0) {
       final r = _dist() / d0; // >1: 広げた / <1: つまんだ
-      final f = _spreadMakesMore ? r : 1 / r;
+      final f = math.pow(_spreadMakesMore ? r : 1 / r, _pinchGain).toDouble();
       final target = (_pinchStartF * f).clamp(_minCols.toDouble(), _maxCols.toDouble()).toDouble();
       // 指の動きに少し遅れて追いかけるので、やわらかく大きさが変わる
       setState(() => _colsF += (target - _colsF) * 0.35);
@@ -678,6 +679,20 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
         backgroundColor: const Color(0xFF1C0F05),
         title: const Text('SideBooks',
             style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Color(0xFFF1D9B5))),
+        actions: [
+          IconButton(
+            tooltip: '並べ替え',
+            icon: const Icon(Icons.swap_vert, color: Color(0xFFF1D9B5)),
+            onPressed: _books.length < 2
+                ? null
+                : () => Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (_) => ReorderPage(books: _books, onChanged: () => Store.save(_books)),
+                      ),
+                    ).then((_) => setState(() {})),
+          ),
+        ],
       ),
       body: _busy
           ? Center(
@@ -690,6 +705,7 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
           : _books.isEmpty
           ? const Center(child: Text('写真・PDF・zip を選んで読み始めよう'))
           : Listener(
+              behavior: HitTestBehavior.translucent, // 棚のどこで2本指を置いても反応する
               onPointerDown: _onPtrDown,
               onPointerMove: _onPtrMove,
               onPointerUp: _onPtrUp,
@@ -1299,4 +1315,68 @@ class _WoodPainter extends CustomPainter {
 
   @override
   bool shouldRepaint(covariant _WoodPainter old) => false;
+}
+
+
+/* ---------------- 並べ替え ---------------- */
+class ReorderPage extends StatefulWidget {
+  const ReorderPage({super.key, required this.books, required this.onChanged});
+  final List<Book> books;
+  final VoidCallback onChanged;
+  @override
+  State<ReorderPage> createState() => _ReorderPageState();
+}
+
+class _ReorderPageState extends State<ReorderPage> {
+  @override
+  Widget build(BuildContext context) {
+    final books = widget.books;
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('並べ替え'),
+        actions: [
+          TextButton(
+            onPressed: () {
+              setState(() => books.sort((a, b) => natCompare(a.title, b.title)));
+              widget.onChanged();
+            },
+            child: const Text('名前順に'),
+          ),
+        ],
+      ),
+      body: ReorderableListView.builder(
+        buildDefaultDragHandles: false,
+        itemCount: books.length,
+        onReorder: (oldIndex, newIndex) {
+          setState(() {
+            if (newIndex > oldIndex) newIndex -= 1;
+            final b = books.removeAt(oldIndex);
+            books.insert(newIndex, b);
+          });
+          widget.onChanged();
+        },
+        itemBuilder: (c, i) {
+          final b = books[i];
+          return ListTile(
+            key: ValueKey(b.id),
+            leading: SizedBox(
+              width: 44,
+              height: 62,
+              child: Image.file(File(b.pages.first), fit: BoxFit.cover, cacheWidth: 200),
+            ),
+            title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis),
+            subtitle: Text('${b.pages.length}ページ'),
+            // 右の「≡」を指でつかんで、上下に動かす
+            trailing: ReorderableDragStartListener(
+              index: i,
+              child: const Padding(
+                padding: EdgeInsets.all(12),
+                child: Icon(Icons.drag_handle),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
 }

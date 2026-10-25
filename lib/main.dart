@@ -241,35 +241,39 @@ class Shelf extends StatefulWidget {
   State<Shelf> createState() => _ShelfState();
 }
 
-class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
+class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
   final List<Book> _books = [];
   bool _busy = false;
   String _busyText = '';
 
-  // 本棚: 2本指で広げる/つまむと、1段に並ぶ本の数が変わる ----------------
-  static const bool _spreadMakesMore = true; // true: 広げると増える / false: 広げると大きくなる(減る)
+  // 本棚: 2本指で広げる/つまむと、写真のように拡大縮小し、離すと1段の冊数が決まる ----------
+  static const bool _spreadMakesMore = false; // false: 広げると大きくなる(写真と同じ) / true: 広げると増える
   static const int _minCols = 1, _maxCols = 5;
-  static const double _pinchGain = 1.2;   // 大きいほど、少し広げただけで大きく変わる(1.0=指と同じ割合)
-  static const double _pinchFollow = 0.6; // 1.0に近いほど指にぴったり、小さいほどふんわり追いかける
+  static const double _pinchGain = 1.0;   // 1.0=指の開き具合と同じ割合で拡大(大きいほど敏感)
   static const double _frameW = 14;       // 左右の枠の太さ
   static const double _boardH = 29;       // 棚板の高さ
   final ScrollController _sc = ScrollController();
   final GlobalKey _shelfKey = GlobalKey();
-  double _shelfW = 400;
-  int _focalIdx = 0;       // 2本指の真ん中にある本
-  double _focalRel = 0;    // その本の段の中での縦の位置(0〜1)
-  Offset _focalLocal = Offset.zero;
-  double _colsF = 3; // 1段に並ぶ本の数(なめらかに変わる)
+  double _shelfW = 400, _shelfH = 800;
+  int _n = 3;                              // 1段に並ぶ冊数(確定した値)
+  int _pinchN = 3;                         // 2本指を置いた時点の冊数
+  double _pinchScale = 1.0;                // 拡大中の倍率(1.0=そのまま)
+  Offset _pinchStart = Offset.zero;        // 2本指を置いた真ん中(棚の中の位置)
+  Offset _pinchMid = Offset.zero;          // 今の2本指の真ん中
+  int _focalIdx = 0;                       // 2本指の真ん中にある本
+  double _focalRel = 0;                    // その本の段の中での縦の位置(0〜1)
   final Map<int, Offset> _ptrs = {};
   double? _pinchStartDist;
-  double _pinchStartF = 3;
   bool _pinching = false;
   late final AnimationController _snap =
-      AnimationController(vsync: this, duration: const Duration(milliseconds: 280));
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 300));
+  late final AnimationController _fade =
+      AnimationController(vsync: this, duration: const Duration(milliseconds: 220), value: 1.0);
 
   @override
   void dispose() {
     _sc.dispose();
+    _fade.dispose();
     _snap.dispose();
     super.dispose();
   }
@@ -277,11 +281,14 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
   @override
   void initState() {
     super.initState();
+    _fade.addListener(() {
+      if (mounted) setState(() {});
+    });
     Store.load().then((l) {
       if (mounted) setState(() => _books.addAll(l));
     });
     Store.loadCols().then((c) {
-      if (c != null && mounted) setState(() => _colsF = c.clamp(_minCols, _maxCols).toDouble());
+      if (c != null && mounted) setState(() => _n = c.clamp(_minCols, _maxCols).toInt());
     });
   }
 
@@ -439,35 +446,41 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     return (v[0] - v[1]).distance;
   }
 
-  double get _cellW => (_shelfW - _frameW * 2) / _colsF;
+  double get _cellW => (_shelfW - _frameW * 2) / _n;
   double get _rowStride => _cellW / 0.7 + 10 + _boardH;
-  int get _nPerRow => _colsF.floor().clamp(1, 99).toInt();
 
-  /// 2本指の真ん中にある本を覚えておく(拡大縮小しても、その本が指の下に残るように)
-  void _captureFocal() {
+  Offset _midLocal() {
     final box = _shelfKey.currentContext?.findRenderObject() as RenderBox?;
     final v = _ptrs.values.toList();
     final mid = Offset((v[0].dx + v[1].dx) / 2, (v[0].dy + v[1].dy) / 2);
-    _focalLocal = box?.globalToLocal(mid) ?? mid;
+    return box?.globalToLocal(mid) ?? mid;
+  }
+
+  /// 2本指の真ん中にある本を覚えておく(確定したあと、その本が指のあたりに来るように)
+  void _captureFocal() {
+    final loc = _midLocal();
+    _pinchStart = loc;
+    _pinchMid = loc;
     final off = _sc.hasClients ? _sc.offset : 0.0;
-    final y = off + _focalLocal.dy;
+    final y = off + loc.dy;
     final stride = _rowStride;
     final r = (y / stride).floor().clamp(0, 100000).toInt();
-    final n = _nPerRow;
-    final inner = _shelfW - _frameW * 2;
-    final spacing = (inner - n * _cellW) / (n + 1);
-    final col = ((_focalLocal.dx - _frameW - spacing / 2) / (_cellW + spacing)).floor().clamp(0, n - 1).toInt();
-    _focalIdx = _books.isEmpty ? 0 : (r * n + col).clamp(0, _books.length - 1).toInt();
+    final col = ((loc.dx - _frameW) / _cellW).floor().clamp(0, _n - 1).toInt();
+    _focalIdx = _books.isEmpty ? 0 : (r * _n + col).clamp(0, _books.length - 1).toInt();
     _focalRel = (y - r * stride) / stride;
   }
 
-  /// 覚えておいた本が、指の下に来るように、縦の位置を合わせる
-  void _anchor() {
+  /// 冊数が確定したあと、覚えておいた本が指のあたりに来るように、縦の位置を合わせる
+  void _anchorAfterCommit() {
     if (!_sc.hasClients || _books.isEmpty) return;
-    final r = _focalIdx ~/ _nPerRow;
     final stride = _rowStride;
-    final off = r * stride + _focalRel * stride - _focalLocal.dy;
-    _sc.jumpTo(off < 0 ? 0.0 : off);
+    final r = _focalIdx ~/ _n;
+    var off = r * stride + _focalRel * stride - _pinchStart.dy;
+    final rows = (_books.length / _n).ceil();
+    final rowCount = rows < 4 ? 4 : rows + 1;
+    final maxOff = (rowCount * stride + 100 - _shelfH).clamp(0.0, 1e9).toDouble();
+    off = off.clamp(0.0, maxOff).toDouble();
+    _sc.jumpTo(off);
   }
 
   void _onPtrDown(PointerDownEvent e) {
@@ -475,7 +488,8 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     if (_ptrs.length == 2) {
       _snap.stop();
       _pinchStartDist = _dist();
-      _pinchStartF = _colsF;
+      _pinchN = _n;
+      _pinchScale = 1.0;
       _captureFocal();
       setState(() => _pinching = true); // 2本指の間は、棚が勝手に動かないようにする
     }
@@ -487,10 +501,12 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     final d0 = _pinchStartDist;
     if (_ptrs.length == 2 && d0 != null && d0 > 0) {
       final r = _dist() / d0; // >1: 広げた / <1: つまんだ
-      final f = math.pow(_spreadMakesMore ? r : 1 / r, _pinchGain).toDouble();
-      final target = (_pinchStartF * f).clamp(_minCols.toDouble(), _maxCols.toDouble()).toDouble();
-      setState(() => _colsF += (target - _colsF) * _pinchFollow);
-      _anchor();
+      final f = math.pow(_spreadMakesMore ? 1 / r : r, _pinchGain).toDouble();
+      final lo = _pinchN / _maxCols, hi = _pinchN / _minCols;
+      setState(() {
+        _pinchScale = f.clamp(lo, hi).toDouble(); // 指の開きに合わせて、そのまま拡大縮小
+        _pinchMid = _midLocal();                  // 指を動かせば、いっしょに動く
+      });
     }
   }
 
@@ -499,37 +515,38 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     if (_ptrs.length < 2 && _pinching) {
       _pinchStartDist = null;
       setState(() => _pinching = false);
-      // 手を離したら、ちょうどいい列数へ、ふわっと吸い寄せる(その間も指の下の本は動かさない)
-      final from = _colsF;
-      final to = _colsF.round().clamp(_minCols, _maxCols).toDouble();
+      // 手を離したら、いちばん近い冊数の大きさへ、ふわっと吸い寄せる
+      final n0 = _pinchN;
+      final nt = (n0 / _pinchScale).round().clamp(_minCols, _maxCols).toInt();
+      final from = _pinchScale;
+      final to = n0 / nt;
       final tween = Tween<double>(begin: from, end: to).chain(CurveTween(curve: Curves.easeOutCubic));
-      void tick() {
-        setState(() => _colsF = tween.evaluate(_snap));
-        _anchor();
-      }
+      void tick() => setState(() => _pinchScale = tween.evaluate(_snap));
       _snap
         ..reset()
         ..addListener(tick);
       _snap.forward().whenComplete(() {
         _snap.removeListener(tick);
-        Store.saveCols(to.round());
-        // 範囲の外に出ていたら、元に戻す
-        if (_sc.hasClients) {
-          final pos = _sc.position;
-          final t = _sc.offset.clamp(pos.minScrollExtent, pos.maxScrollExtent).toDouble();
-          if ((t - _sc.offset).abs() > 0.5) {
-            _sc.animateTo(t, duration: const Duration(milliseconds: 200), curve: Curves.easeOut);
-          }
+        if (!mounted) return;
+        final changed = nt != n0;
+        setState(() {
+          _n = nt;
+          _pinchScale = 1.0;
+        });
+        if (changed) {
+          _anchorAfterCommit();
+          _fade.forward(from: 0.0); // 並びが変わるときは、本をふわっと表示
         }
+        Store.saveCols(nt);
       });
     }
   }
 
   /// 本棚の1冊分(表紙・タイトル・読んだ進捗)
   Widget _bookCell(Book b) {
-    final titleSize = (22 / (_colsF + 0.4)).clamp(9.0, 20.0).toDouble();
+    final titleSize = (22 / (_n + 0.4)).clamp(9.0, 20.0).toDouble();
     final progress = b.pages.isEmpty ? 0.0 : (b.lastPage + 1) / b.pages.length;
-    return GestureDetector(
+    return Opacity(opacity: _fade.value, child: GestureDetector(
       onLongPress: () => _showBookMenu(b),
       onTap: () => Navigator.push(
           context,
@@ -587,7 +604,7 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
           ),
         ),
       ),
-    );
+    ));
   }
 
   /// 棚板(上の面・手前の面・影)
@@ -627,14 +644,15 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
     const frame = _frameW; // 左右の枠の太さ
     return LayoutBuilder(builder: (context, box) {
       _shelfW = box.maxWidth;
+      _shelfH = box.maxHeight;
       final inner = box.maxWidth - frame * 2;
-      final n = _colsF.floor().clamp(1, 99).toInt(); // 1段の冊数
-      final cellW = inner / _colsF; // 本1冊の幅(なめらかに変わる)
+      final n = _n; // 1段の冊数
+      final cellW = inner / n; // 本1冊の幅
       final rowH = cellW / 0.7 + 10;
       final rows = (_books.length / n).ceil();
       final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
 
-      return Stack(key: _shelfKey, children: [
+      final shelfStack = Stack(children: [
         Container(color: const Color(0xFF2A1809)),
         ListView.builder(
           controller: _sc,
@@ -724,6 +742,17 @@ class _ShelfState extends State<Shelf> with SingleTickerProviderStateMixin {
           ),
         ),
       ]);
+
+      // 2本指のあいだは、写真のように、指の下を中心に拡大縮小して見せる
+      final m = Matrix4.identity()
+        ..translate(_pinchMid.dx, _pinchMid.dy)
+        ..scale(_pinchScale, _pinchScale, 1.0)
+        ..translate(-_pinchStart.dx, -_pinchStart.dy);
+      return Container(
+        key: _shelfKey,
+        color: const Color(0xFF2A1809),
+        child: ClipRect(child: Transform(transform: m, child: shelfStack)),
+      );
     });
   }
 
@@ -1388,9 +1417,9 @@ class _ReorderPageState extends State<ReorderPage> {
     final books = widget.books;
     const cream = Color(0xFFF1D9B5);
     return Scaffold(
-      backgroundColor: const Color(0xFF2A1809),
+      backgroundColor: const Color(0xFF6B4423),
       appBar: AppBar(
-        backgroundColor: const Color(0xFF1C0F05),
+        backgroundColor: const Color(0xFF4A2D14),
         foregroundColor: cream,
         title: const Text('並べ替え', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.2)),
         actions: [
@@ -1416,8 +1445,13 @@ class _ReorderPageState extends State<ReorderPage> {
         },
         itemBuilder: (c, i) {
           final b = books[i];
-          return ListTile(
+          return Padding(
             key: ValueKey(b.id),
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+            child: ListTile(
+            tileColor: const Color(0xFF86582B),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             leading: SizedBox(
               width: 44,
               height: 62,
@@ -1433,7 +1467,7 @@ class _ReorderPageState extends State<ReorderPage> {
                 child: Icon(Icons.drag_handle, color: Color(0xFFE6B97D)),
               ),
             ),
-          );
+          ));
         },
       ),
     );

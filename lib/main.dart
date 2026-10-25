@@ -260,6 +260,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
   double _pinchScale = 1.0;                // 拡大中の倍率(1.0=そのまま)
   Offset _pinchStart = Offset.zero;        // 2本指を置いた真ん中(棚の中の位置)
   Offset _pinchMid = Offset.zero;          // 今の2本指の真ん中
+  double _pinchOff0 = 0;                   // 2本指を置いた時点の、縦スクロールの位置
   int _focalIdx = 0;                       // 2本指の真ん中にある本
   double _focalRel = 0;                    // その本の段の中での縦の位置(0〜1)
   final Map<int, Offset> _ptrs = {};
@@ -462,6 +463,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     _pinchStart = loc;
     _pinchMid = loc;
     final off = _sc.hasClients ? _sc.offset : 0.0;
+    _pinchOff0 = off;
     final y = off + loc.dy;
     final stride = _rowStride;
     final r = (y / stride).floor().clamp(0, 100000).toInt();
@@ -639,119 +641,131 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     ]);
   }
 
-  /// 木の棚の見た目で、1段ずつ並べる
+  /// 棚の1段ぶんの背景(奥の板・影・棚板)。ここには本を置かない=広げても動かない
+  Widget _shelfRowBg(int r, double rowH) {
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      SizedBox(
+        height: rowH,
+        child: Stack(children: [
+          // 棚の奥の板(縦の木目)
+          Positioned.fill(
+            child: Stack(fit: StackFit.expand, children: [
+              const DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    begin: Alignment.topCenter,
+                    end: Alignment.bottomCenter,
+                    colors: [Color(0xFF4A2D14), Color(0xFF7A4B20)],
+                  ),
+                ),
+              ),
+              CustomPaint(painter: _WoodPainter(r + 1, strength: 0.16)),
+            ]),
+          ),
+          // 上の棚板が落とす影
+          Positioned(
+            top: 0,
+            left: 0,
+            right: 0,
+            height: 36,
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  begin: Alignment.topCenter,
+                  end: Alignment.bottomCenter,
+                  colors: [Colors.black.withOpacity(0.6), Colors.transparent],
+                ),
+              ),
+            ),
+          ),
+        ]),
+      ),
+      _board(),
+    ]);
+  }
+
+  /// 木の棚。棚(枠・板)は動かさず、本だけが拡大縮小する
   Widget _shelf() {
     const frame = _frameW; // 左右の枠の太さ
     return LayoutBuilder(builder: (context, box) {
       _shelfW = box.maxWidth;
       _shelfH = box.maxHeight;
       final inner = box.maxWidth - frame * 2;
-      final n = _n; // 1段の冊数
-      final cellW = inner / n; // 本1冊の幅
+      final n = _n;                   // 1段の冊数
+      final cellW = inner / n;        // 本1冊の幅
       final rowH = cellW / 0.7 + 10;
+      final stride = rowH + _boardH;
       final rows = (_books.length / n).ceil();
       final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
+      final contentH = rowCount * stride + 100;
+      final bookH = (cellW - 12) / 0.7 + 10;
 
-      final shelfStack = Stack(children: [
-        Container(color: const Color(0xFF2A1809)),
-        ListView.builder(
-          controller: _sc,
-          physics: (_pinching || _snap.isAnimating) ? const NeverScrollableScrollPhysics() : null,
-          padding: const EdgeInsets.only(bottom: 100),
-          itemCount: rowCount,
-          itemBuilder: (_, r) {
-            final cells = <Widget>[];
-            for (var c = 0; c < n; c++) {
-              final i = r * n + c;
-              cells.add(SizedBox(width: cellW, child: i < _books.length ? _bookCell(_books[i]) : null));
-            }
-            return Column(mainAxisSize: MainAxisSize.min, children: [
-              Stack(children: [
-                // 棚の奥の板(縦の木目)
-                Positioned.fill(
-                  child: Stack(fit: StackFit.expand, children: [
-                    const DecoratedBox(
-                      decoration: BoxDecoration(
-                        gradient: LinearGradient(
-                          begin: Alignment.topCenter,
-                          end: Alignment.bottomCenter,
-                          colors: [Color(0xFF4A2D14), Color(0xFF7A4B20)],
-                        ),
-                      ),
-                    ),
-                    CustomPaint(painter: _WoodPainter(r + 1, strength: 0.16)),
-                  ]),
-                ),
-                // 上の棚板が落とす影
-                Positioned(
-                  top: 0,
-                  left: 0,
-                  right: 0,
-                  height: 36,
-                  child: DecoratedBox(
-                    decoration: BoxDecoration(
-                      gradient: LinearGradient(
-                        begin: Alignment.topCenter,
-                        end: Alignment.bottomCenter,
-                        colors: [Colors.black.withOpacity(0.6), Colors.transparent],
-                      ),
-                    ),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: frame),
-                  child: SizedBox(
-                    height: rowH,
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceEvenly,
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: cells,
-                    ),
-                  ),
-                ),
-              ]),
-              _board(),
-            ]);
-          },
-        ),
-        // 左右の枠
-        Positioned(
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: frame,
-          child: const IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [Color(0xFF1C0F05), Color(0xFF5E3815)]),
-              ),
-            ),
-          ),
-        ),
-        Positioned(
-          right: 0,
-          top: 0,
-          bottom: 0,
-          width: frame,
-          child: const IgnorePointer(
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                gradient: LinearGradient(colors: [Color(0xFF5E3815), Color(0xFF1C0F05)]),
-              ),
-            ),
-          ),
-        ),
-      ]);
-
-      // 2本指のあいだは、写真のように、指の下を中心に拡大縮小して見せる
+      // 本(2本指のあいだだけ、写真のように拡大縮小する)
+      final books = <Widget>[];
+      for (var i = 0; i < _books.length; i++) {
+        final r = i ~/ n, c = i % n;
+        books.add(Positioned(
+          left: frame + c * cellW,
+          top: r * stride + rowH - bookH,
+          width: cellW,
+          child: _bookCell(_books[i]),
+        ));
+      }
       final m = Matrix4.identity()
-        ..translate(_pinchMid.dx, _pinchMid.dy)
+        ..translate(_pinchMid.dx, _pinchOff0 + _pinchMid.dy)
         ..scale(_pinchScale, _pinchScale, 1.0)
-        ..translate(-_pinchStart.dx, -_pinchStart.dy);
+        ..translate(-_pinchStart.dx, -(_pinchOff0 + _pinchStart.dy));
+
+      final content = SizedBox(
+        height: contentH,
+        child: Stack(clipBehavior: Clip.none, children: [
+          Column(children: [for (var r = 0; r < rowCount; r++) _shelfRowBg(r, rowH)]),
+          Positioned.fill(
+            child: Transform(
+              transform: m,
+              child: Stack(clipBehavior: Clip.none, children: books),
+            ),
+          ),
+        ]),
+      );
+
       return Container(
         key: _shelfKey,
         color: const Color(0xFF2A1809),
-        child: ClipRect(child: Transform(transform: m, child: shelfStack)),
+        child: Stack(children: [
+          SingleChildScrollView(
+            controller: _sc,
+            physics: (_pinching || _snap.isAnimating) ? const NeverScrollableScrollPhysics() : null,
+            child: content,
+          ),
+          // 左右の枠(動かない)
+          Positioned(
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: frame,
+            child: const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Color(0xFF1C0F05), Color(0xFF5E3815)]),
+                ),
+              ),
+            ),
+          ),
+          Positioned(
+            right: 0,
+            top: 0,
+            bottom: 0,
+            width: frame,
+            child: const IgnorePointer(
+              child: DecoratedBox(
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(colors: [Color(0xFF5E3815), Color(0xFF1C0F05)]),
+                ),
+              ),
+            ),
+          ),
+        ]),
       );
     });
   }
@@ -1415,12 +1429,13 @@ class _ReorderPageState extends State<ReorderPage> {
   @override
   Widget build(BuildContext context) {
     final books = widget.books;
-    const cream = Color(0xFFF1D9B5);
+    const ink = Color(0xFF111111);
     return Scaffold(
-      backgroundColor: const Color(0xFF6B4423),
+      backgroundColor: Colors.white,
       appBar: AppBar(
-        backgroundColor: const Color(0xFF4A2D14),
-        foregroundColor: cream,
+        backgroundColor: Colors.white,
+        surfaceTintColor: Colors.white,
+        foregroundColor: ink,
         title: const Text('並べ替え', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.2)),
         actions: [
           TextButton(
@@ -1428,7 +1443,7 @@ class _ReorderPageState extends State<ReorderPage> {
               setState(() => books.sort((a, b) => natCompare(a.title, b.title)));
               widget.onChanged();
             },
-            child: const Text('名前順に', style: TextStyle(color: Color(0xFFE6B97D))),
+            child: const Text('名前順に', style: TextStyle(color: Color(0xFF1565C0))),
           ),
         ],
       ),
@@ -1449,7 +1464,7 @@ class _ReorderPageState extends State<ReorderPage> {
             key: ValueKey(b.id),
             padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
             child: ListTile(
-            tileColor: const Color(0xFF86582B),
+            tileColor: const Color(0xFFF2F2F2),
             shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
             contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
             leading: SizedBox(
@@ -1457,14 +1472,14 @@ class _ReorderPageState extends State<ReorderPage> {
               height: 62,
               child: Image.file(File(b.pages.first), fit: BoxFit.cover, cacheWidth: 200),
             ),
-            title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: cream)),
-            subtitle: Text('${b.pages.length}ページ', style: const TextStyle(color: Color(0xFFC9A77A))),
+            title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: ink)),
+            subtitle: Text('${b.pages.length}ページ', style: const TextStyle(color: Color(0xFF555555))),
             // 右の「≡」を指でつかんで、上下に動かす
             trailing: ReorderableDragStartListener(
               index: i,
               child: const Padding(
                 padding: EdgeInsets.all(12),
-                child: Icon(Icons.drag_handle, color: Color(0xFFE6B97D)),
+                child: Icon(Icons.drag_handle, color: Color(0xFF333333)),
               ),
             ),
           ));

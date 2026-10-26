@@ -479,7 +479,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     final r = _focalIdx ~/ _n;
     var off = r * stride + _focalRel * stride - _pinchStart.dy;
     final rows = (_books.length / _n).ceil();
-    final rowCount = rows < 4 ? 4 : rows + 1;
+    final rowCount = rows < 6 ? 6 : rows + 1;
     final maxOff = (rowCount * stride + 100 - _shelfH).clamp(0.0, 1e9).toDouble();
     off = off.clamp(0.0, maxOff).toDouble();
     _sc.jumpTo(off);
@@ -534,6 +534,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
         setState(() {
           _n = nt;
           _pinchScale = 1.0;
+          _pinchMid = _pinchStart;
         });
         if (changed) {
           _anchorAfterCommit();
@@ -546,7 +547,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
 
   /// 本棚の1冊分(表紙・タイトル・読んだ進捗)
   Widget _bookCell(Book b) {
-    final titleSize = (22 / (_n + 0.4)).clamp(9.0, 20.0).toDouble();
+    final titleSize = (22 / (_n / _pinchScale + 0.4)).clamp(9.0, 24.0).toDouble();
     final progress = b.pages.isEmpty ? 0.0 : (b.lastPage + 1) / b.pages.length;
     return Opacity(opacity: _fade.value, child: GestureDetector(
       onLongPress: () => _showBookMenu(b),
@@ -696,36 +697,47 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
       final rowH = cellW / 0.7 + 10;
       final stride = rowH + _boardH;
       final rows = (_books.length / n).ceil();
-      final rowCount = rows < 4 ? 4 : rows + 1; // 空の段も見せる
+      final rowCount = rows < 6 ? 6 : rows + 1; // 空の段も見せる(縮めても下が空かないように多め)
       final contentH = rowCount * stride + 100;
       final bookH = (cellW - 12) / 0.7 + 10;
 
-      // 本(2本指のあいだだけ、写真のように拡大縮小する)
+      // 広げている間は、棚の段(縦)と本が、同じ割合で拡大縮小する。
+      // 棚の横幅は変わらない(左右の枠もそのまま)ので、まわりに空きができない。
+      final sc = _pinchScale;
+      final fx = _pinchStart.dx;                 // 2本指を置いた真ん中(横)
+      final fy = _pinchOff0 + _pinchStart.dy;    // 2本指を置いた真ん中(縦・棚の中での位置)
+      final mx = _pinchMid.dx;                   // 今の2本指の真ん中
+      final my = _pinchOff0 + _pinchMid.dy;
+
+      final rowsLayer = Transform(
+        transform: Matrix4.identity()
+          ..translate(0.0, my)
+          ..scale(1.0, sc, 1.0)
+          ..translate(0.0, -fy),
+        child: Column(children: [for (var r = 0; r < rowCount; r++) _shelfRowBg(r, rowH)]),
+      );
+
       final books = <Widget>[];
       for (var i = 0; i < _books.length; i++) {
         final r = i ~/ n, c = i % n;
+        final bottom0 = r * stride + rowH;                         // 拡大前に乗っている棚板の位置
+        final bottom = my + (bottom0 - fy) * sc;                   // 棚板といっしょに動く
+        final w = cellW * sc;
+        final cx = mx + (frame + c * cellW + cellW / 2 - fx) * sc; // 指の真ん中から横に広がる
+        final h = (w - 12) / 0.7 + 10;
         books.add(Positioned(
-          left: frame + c * cellW,
-          top: r * stride + rowH - bookH,
-          width: cellW,
+          left: cx - w / 2,
+          top: bottom - h,
+          width: w,
           child: _bookCell(_books[i]),
         ));
       }
-      final m = Matrix4.identity()
-        ..translate(_pinchMid.dx, _pinchOff0 + _pinchMid.dy)
-        ..scale(_pinchScale, _pinchScale, 1.0)
-        ..translate(-_pinchStart.dx, -(_pinchOff0 + _pinchStart.dy));
 
       final content = SizedBox(
         height: contentH,
         child: Stack(clipBehavior: Clip.none, children: [
-          Column(children: [for (var r = 0; r < rowCount; r++) _shelfRowBg(r, rowH)]),
-          Positioned.fill(
-            child: Transform(
-              transform: m,
-              child: Stack(clipBehavior: Clip.none, children: books),
-            ),
-          ),
+          Positioned(top: 0, left: 0, right: 0, child: rowsLayer),
+          Positioned.fill(child: Stack(clipBehavior: Clip.none, children: books)),
         ]),
       );
 

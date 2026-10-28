@@ -257,7 +257,8 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
   double _shelfW = 400, _shelfH = 800;
   int _n = 3;                              // 1段に並ぶ冊数(確定した値)
   int _pinchN = 3;                         // 2本指を置いた時点の冊数
-  double _pinchScale = 1.0;                // 拡大中の倍率(1.0=そのまま)
+  double _pinchScale = 1.0;                // 本の拡大中の倍率(1.0=そのまま)
+  double _rowScale = 1.0;                  // 棚の段の倍率。2本指の間は1.0のまま動かさず、離したあとだけ変わる
   Offset _pinchStart = Offset.zero;        // 2本指を置いた真ん中(棚の中の位置)
   Offset _pinchMid = Offset.zero;          // 今の2本指の真ん中
   double _pinchOff0 = 0;                   // 2本指を置いた時点の、縦スクロールの位置
@@ -523,7 +524,9 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
       final from = _pinchScale;
       final to = n0 / nt;
       final tween = Tween<double>(begin: from, end: to).chain(CurveTween(curve: Curves.easeOutCubic));
-      void tick() => setState(() => _pinchScale = tween.evaluate(_snap));
+      void tick() => setState(() {
+        _pinchScale = tween.evaluate(_snap);
+      });
       _snap
         ..reset()
         ..addListener(tick);
@@ -534,6 +537,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
         setState(() {
           _n = nt;
           _pinchScale = 1.0;
+          _rowScale = 1.0;
           _pinchMid = _pinchStart;
         });
         if (changed) {
@@ -701,27 +705,28 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
       final contentH = rowCount * stride + 100;
       final bookH = (cellW - 12) / 0.7 + 10;
 
-      // 広げている間は、棚の段(縦)と本が、同じ割合で拡大縮小する。
-      // 棚の横幅は変わらない(左右の枠もそのまま)ので、まわりに空きができない。
+      // 2本指のあいだ: 棚(板・奥の木目)は動かさず、本だけが、自分の棚板の上で大きさと横の間隔を変える。
+      // 指を離したあと: 棚の段も、新しい大きさへなめらかに変わる。
       final sc = _pinchScale;
+      final rs = _rowScale;
       final fx = _pinchStart.dx;                 // 2本指を置いた真ん中(横)
       final fy = _pinchOff0 + _pinchStart.dy;    // 2本指を置いた真ん中(縦・棚の中での位置)
-      final mx = _pinchMid.dx;                   // 今の2本指の真ん中
-      final my = _pinchOff0 + _pinchMid.dy;
+      final mx = _pinchMid.dx;                   // 今の2本指の真ん中(横)
 
       final rowsLayer = Transform(
         transform: Matrix4.identity()
-          ..translate(0.0, my)
-          ..scale(1.0, sc, 1.0)
+          ..translate(0.0, fy)
+          ..scale(1.0, rs, 1.0)
           ..translate(0.0, -fy),
+        // 棚(奥の板・棚板・枠)は、広げている間も、離したあとも、ちらつかせず動かさない
         child: Column(children: [for (var r = 0; r < rowCount; r++) _shelfRowBg(r, rowH)]),
       );
 
       final books = <Widget>[];
       for (var i = 0; i < _books.length; i++) {
         final r = i ~/ n, c = i % n;
-        final bottom0 = r * stride + rowH;                         // 拡大前に乗っている棚板の位置
-        final bottom = my + (bottom0 - fy) * sc;                   // 棚板といっしょに動く
+        final bottom0 = r * stride + rowH;                         // 乗っている棚板の位置
+        final bottom = fy + (bottom0 - fy) * rs;                   // 棚の段が動くときだけ、いっしょに動く
         final w = cellW * sc;
         final cx = mx + (frame + c * cellW + cellW / 2 - fx) * sc; // 指の真ん中から横に広がる
         final h = (w - 12) / 0.7 + 10;

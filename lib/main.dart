@@ -28,7 +28,7 @@ class SideBooksApp extends StatelessWidget {
         title: 'SideBooks',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(useMaterial3: true),
-        home: const Shelf(),
+        home: const HomePage(),
       );
 }
 
@@ -39,12 +39,54 @@ class Book {
   final List<String> pages; // アプリ内に保存した画像のパス
   int lastPage;
   bool rtl = false; // この本の開き方(true=右開き / false=左開き)。最初は左開き
+  String shelfId = ''; // どの本棚に入っているか
 
   Map<String, dynamic> toJson() =>
-      {'id': id, 'title': title, 'pages': pages, 'lastPage': lastPage, 'rtl': rtl};
+      {'id': id, 'title': title, 'pages': pages, 'lastPage': lastPage, 'rtl': rtl, 'shelfId': shelfId};
   factory Book.fromJson(Map<String, dynamic> j) =>
       Book(j['id'], j['title'], List<String>.from(j['pages']), j['lastPage'] ?? 0)
-        ..rtl = j['rtl'] ?? false;
+        ..rtl = j['rtl'] ?? false
+        ..shelfId = j['shelfId'] ?? '';
+}
+
+/// 本棚(名前つき)
+class ShelfInfo {
+  ShelfInfo(this.id, this.name);
+  final String id;
+  String name;
+  Map<String, dynamic> toJson() => {'id': id, 'name': name};
+  factory ShelfInfo.fromJson(Map<String, dynamic> j) => ShelfInfo(j['id'], j['name']);
+}
+
+/// アプリ全体のデータ(本と本棚)。どの画面からも同じものを見る
+class AppData {
+  AppData._();
+  static final AppData I = AppData._();
+  final List<Book> books = [];
+  final List<ShelfInfo> shelves = [];
+  bool loaded = false;
+
+  Future<void> load() async {
+    if (loaded) return;
+    books
+      ..clear()
+      ..addAll(await Store.load());
+    shelves
+      ..clear()
+      ..addAll(await Store.loadShelves());
+    if (shelves.isEmpty) shelves.add(ShelfInfo('default', 'ホーム'));
+    for (final b in books) {
+      if (!shelves.any((s) => s.id == b.shelfId)) b.shelfId = shelves.first.id; // 以前の本は、先頭の本棚へ
+    }
+    loaded = true;
+  }
+
+  List<Book> booksOf(String shelfId) => books.where((b) => b.shelfId == shelfId).toList();
+
+  Future<void> save() async {
+    await Store.save(books);
+    await Store.saveShelves(shelves);
+  }
 }
 
 /// 本の保存場所: アプリ専用フォルダ/books/<id>/0000.jpg ... と books.json
@@ -206,6 +248,27 @@ class Store {
     } catch (_) {}
   }
 
+  static Future<File> _shelvesFile() async {
+    final d = await getApplicationDocumentsDirectory();
+    return File('${d.path}/shelves.json');
+  }
+
+  static Future<List<ShelfInfo>> loadShelves() async {
+    try {
+      final f = await _shelvesFile();
+      if (!await f.exists()) return [];
+      final list = jsonDecode(await f.readAsString()) as List;
+      return list.map((e) => ShelfInfo.fromJson(e as Map<String, dynamic>)).toList();
+    } catch (_) {
+      return [];
+    }
+  }
+
+  static Future<void> saveShelves(List<ShelfInfo> shelves) async {
+    final f = await _shelvesFile();
+    await f.writeAsString(jsonEncode(shelves.map((e) => e.toJson()).toList()));
+  }
+
   static Future<void> save(List<Book> books) async {
     final f = await _index();
     await f.writeAsString(jsonEncode(books.map((b) => b.toJson()).toList()));
@@ -236,13 +299,14 @@ class Store {
 
 /* ---------------- 本棚 ---------------- */
 class Shelf extends StatefulWidget {
-  const Shelf({super.key});
+  const Shelf({super.key, required this.info});
+  final ShelfInfo info;
   @override
   State<Shelf> createState() => _ShelfState();
 }
 
 class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
-  final List<Book> _books = [];
+  List<Book> get _books => AppData.I.booksOf(widget.info.id); // この本棚の本だけ
   bool _busy = false;
   String _busyText = '';
 
@@ -285,9 +349,6 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     super.initState();
     _fade.addListener(() {
       if (mounted) setState(() {});
-    });
-    Store.load().then((l) {
-      if (mounted) setState(() => _books.addAll(l));
     });
     Store.loadCols().then((c) {
       if (c != null && mounted) setState(() => _n = c.clamp(_minCols, _maxCols).toInt());
@@ -334,8 +395,9 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
       _busyText = '保存中…';
     });
     final book = await Store.addBook('本 ${_books.length + 1}', files);
-    _books.add(book);
-    await Store.save(_books);
+    book.shelfId = widget.info.id;
+    AppData.I.books.add(book);
+    await AppData.I.save();
     if (mounted) setState(() => _busy = false);
   }
 
@@ -380,8 +442,8 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
         paths = await compute(extractZip, [path, dir.path]);
       }
       if (paths.isEmpty) throw '画像が見つかりませんでした';
-      _books.add(Book(id, title, paths));
-      await Store.save(_books);
+      AppData.I.books.add(Book(id, title, paths)..shelfId = widget.info.id);
+      await AppData.I.save();
     } catch (e) {
       if (await dir.exists()) await dir.delete(recursive: true);
       _snack('読み込めませんでした: $e');
@@ -404,6 +466,14 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
             },
           ),
           ListTile(
+            leading: const Icon(Icons.drive_file_move_outline),
+            title: const Text('ほかの本棚へ移動'),
+            onTap: () {
+              Navigator.pop(c);
+              _moveBook(b);
+            },
+          ),
+          ListTile(
             leading: const Icon(Icons.delete_outline),
             title: const Text('削除'),
             onTap: () {
@@ -416,6 +486,28 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     );
   }
 
+  Future<void> _moveBook(Book b) async {
+    final others = AppData.I.shelves.where((s) => s.id != widget.info.id).toList();
+    if (others.isEmpty) {
+      _snack('ほかの本棚がありません。先に、本棚の一覧で本棚を作ってください');
+      return;
+    }
+    final to = await showDialog<ShelfInfo>(
+      context: context,
+      builder: (c) => SimpleDialog(
+        title: const Text('どの本棚へ移しますか?'),
+        children: [
+          for (final s in others)
+            SimpleDialogOption(onPressed: () => Navigator.pop(c, s), child: Text(s.name, style: const TextStyle(fontSize: 17))),
+        ],
+      ),
+    );
+    if (to == null) return;
+    setState(() => b.shelfId = to.id);
+    await AppData.I.save();
+    _snack('「${to.name}」へ移しました');
+  }
+
   Future<void> _rename(Book b) async {
     final name = await showDialog<String>(
       context: context,
@@ -423,7 +515,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     );
     if (name == null || name.isEmpty) return;
     setState(() => b.title = name);
-    await Store.save(_books);
+    await AppData.I.save();
   }
 
   Future<void> _confirmDelete(Book b) async {
@@ -439,8 +531,8 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     );
     if (ok != true) return;
     await Store.deleteBook(b);
-    setState(() => _books.remove(b));
-    await Store.save(_books);
+    setState(() => AppData.I.books.remove(b));
+    await AppData.I.save();
   }
 
   double _dist() {
@@ -488,7 +580,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
 
   void _onPtrDown(PointerDownEvent e) {
     _ptrs[e.pointer] = e.position;
-    if (_ptrs.length == 2) {
+    if (_ptrs.length == 2 && _dragBook == null) {
       _snap.stop();
       _pinchStartDist = _dist();
       _pinchN = _n;
@@ -549,15 +641,100 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     }
   }
 
+  // ---- 本棚の上で、本を長押ししたままドラッグして、順番を入れ替える ----
+  Book? _dragBook;
+  int _dragTarget = 0;
+  bool _dragMoved = false;
+  Offset _dragStartLocal = Offset.zero;
+  Offset _dragLocal = Offset.zero; // 指の位置(棚の表示領域の中)
+
+  Offset _toLocal(Offset global) {
+    final box = _shelfKey.currentContext?.findRenderObject() as RenderBox?;
+    return box?.globalToLocal(global) ?? global;
+  }
+
+  void _dragStart(Book b, Offset global) {
+    if (_pinching || _snap.isAnimating) return;
+    final idx = _books.indexOf(b);
+    if (idx < 0) return;
+    HapticFeedback.mediumImpact();
+    final loc = _toLocal(global);
+    setState(() {
+      _dragBook = b;
+      _dragTarget = idx;
+      _dragMoved = false;
+      _dragStartLocal = loc;
+      _dragLocal = loc;
+    });
+  }
+
+  void _dragMove(Offset global) {
+    if (_dragBook == null) return;
+    final loc = _toLocal(global);
+    final n = _n;
+    final cellW = (_shelfW - _frameW * 2) / n;
+    final stride = cellW / 0.7 + 10 + _boardH;
+    final off = _sc.hasClients ? _sc.offset : 0.0;
+    final row = ((off + loc.dy) / stride).floor().clamp(0, 100000).toInt();
+    final col = ((loc.dx - _frameW) / cellW).floor().clamp(0, n - 1).toInt();
+    final len = _books.length;
+    final t = (row * n + col).clamp(0, len - 1).toInt();
+    // 上や下の端に近づいたら、自動でスクロール
+    if (_sc.hasClients) {
+      final pos = _sc.position;
+      var d = 0.0;
+      if (loc.dy < 90) d = -16;
+      if (loc.dy > _shelfH - 90) d = 16;
+      if (d != 0) _sc.jumpTo((off + d).clamp(pos.minScrollExtent, pos.maxScrollExtent).toDouble());
+    }
+    setState(() {
+      _dragLocal = loc;
+      if ((loc - _dragStartLocal).distance > 14) _dragMoved = true;
+      if (t != _dragTarget) {
+        _dragTarget = t;
+        HapticFeedback.selectionClick();
+      }
+    });
+  }
+
+  void _dragEnd({bool cancel = false}) {
+    final b = _dragBook;
+    if (b == null) return;
+    final moved = _dragMoved;
+    final target = _dragTarget;
+    setState(() => _dragBook = null);
+    if (cancel) return;
+    if (!moved) {
+      _showBookMenu(b); // 動かさず離したときは、メニューを出す
+      return;
+    }
+    final list = _books;
+    final from = list.indexOf(b);
+    if (from < 0 || from == target) return;
+    final item = list.removeAt(from);
+    list.insert(target, item);
+    // 全体の並びの中で、この本棚の本が入っている場所に、新しい順で入れ直す
+    final all = AppData.I.books;
+    final slots = <int>[for (var i = 0; i < all.length; i++) if (all[i].shelfId == widget.info.id) i];
+    for (var k = 0; k < slots.length; k++) {
+      all[slots[k]] = list[k];
+    }
+    setState(() {});
+    AppData.I.save();
+  }
+
   /// 本棚の1冊分(表紙・タイトル・読んだ進捗)
   Widget _bookCell(Book b) {
     final titleSize = (22 / (_n / _pinchScale + 0.4)).clamp(9.0, 24.0).toDouble();
     final progress = b.pages.isEmpty ? 0.0 : (b.lastPage + 1) / b.pages.length;
     return Opacity(opacity: _fade.value, child: GestureDetector(
-      onLongPress: () => _showBookMenu(b),
+      onLongPressStart: (d) => _dragStart(b, d.globalPosition),
+      onLongPressMoveUpdate: (d) => _dragMove(d.globalPosition),
+      onLongPressEnd: (d) => _dragEnd(),
+      onLongPressCancel: () => _dragEnd(cancel: true),
       onTap: () => Navigator.push(
           context,
-          MaterialPageRoute(builder: (_) => Reader(book: b, onChanged: () => Store.save(_books)))
+          MaterialPageRoute(builder: (_) => Reader(book: b, onChanged: () => AppData.I.save()))
         ).then((_) => setState(() {})), // 戻ったら進捗を更新
       child: Padding(
         padding: const EdgeInsets.fromLTRB(6, 10, 6, 0),
@@ -700,7 +877,8 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
       final cellW = inner / n;        // 本1冊の幅
       final rowH = cellW / 0.7 + 10;
       final stride = rowH + _boardH;
-      final rows = (_books.length / n).ceil();
+      final bk = _books;
+      final rows = (bk.length / n).ceil();
       final rowCount = rows < 6 ? 6 : rows + 1; // 空の段も見せる(縮めても下が空かないように多め)
       final contentH = rowCount * stride + 100;
       final bookH = (cellW - 12) / 0.7 + 10;
@@ -722,21 +900,50 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
         child: Column(children: [for (var r = 0; r < rowCount; r++) _shelfRowBg(r, rowH)]),
       );
 
+      // ドラッグ中は、持っている本を目的の位置に差し込んだ並びで、まわりの本を並べる(すき間が空く)
+      final dragged = _dragBook;
+      var view = bk;
+      if (dragged != null) {
+        view = List.of(bk);
+        final from = view.indexOf(dragged);
+        if (from >= 0) {
+          view.removeAt(from);
+          view.insert(_dragTarget.clamp(0, view.length).toInt(), dragged);
+        }
+      }
       final books = <Widget>[];
-      for (var i = 0; i < _books.length; i++) {
+      Widget? draggedWidget;
+      for (var i = 0; i < view.length; i++) {
+        final b = view[i];
         final r = i ~/ n, c = i % n;
+        if (b == dragged) {
+          // 持っている本は、指について動く(同じキーなので、長押しの操作が途切れない)
+          final dw = cellW * 1.1;
+          final dh = (dw - 12) / 0.7 + 10;
+          final cy = (_sc.hasClients ? _sc.offset : 0.0) + _dragLocal.dy;
+          draggedWidget = Positioned(
+            key: ValueKey(b.id),
+            left: _dragLocal.dx - dw / 2,
+            top: cy - dh * 0.6,
+            width: dw,
+            child: _bookCell(b),
+          );
+          continue;
+        }
         final bottom0 = r * stride + rowH;                         // 乗っている棚板の位置
         final bottom = fy + (bottom0 - fy) * rs;                   // 棚の段が動くときだけ、いっしょに動く
         final w = cellW * sc;
         final cx = mx + (frame + c * cellW + cellW / 2 - fx) * sc; // 指の真ん中から横に広がる
         final h = (w - 12) / 0.7 + 10;
         books.add(Positioned(
+          key: ValueKey(b.id),
           left: cx - w / 2,
           top: bottom - h,
           width: w,
-          child: _bookCell(_books[i]),
+          child: _bookCell(b),
         ));
       }
+      if (draggedWidget != null) books.add(draggedWidget);
 
       final content = SizedBox(
         height: contentH,
@@ -752,7 +959,7 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
         child: Stack(children: [
           SingleChildScrollView(
             controller: _sc,
-            physics: (_pinching || _snap.isAnimating) ? const NeverScrollableScrollPhysics() : null,
+            physics: (_pinching || _snap.isAnimating || _dragBook != null) ? const NeverScrollableScrollPhysics() : null,
             child: content,
           ),
           // 左右の枠(動かない)
@@ -792,22 +999,11 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C0F05),
-        title: const Text('SideBooks',
-            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, color: Color(0xFFF1D9B5))),
-        actions: [
-          IconButton(
-            tooltip: '並べ替え',
-            icon: const Icon(Icons.swap_vert, color: Color(0xFFF1D9B5)),
-            onPressed: _books.length < 2
-                ? null
-                : () => Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                        builder: (_) => ReorderPage(books: _books, onChanged: () => Store.save(_books)),
-                      ),
-                    ).then((_) => setState(() {})),
-          ),
-        ],
+        foregroundColor: const Color(0xFFF1D9B5),
+        title: Text(widget.info.name,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.2, color: Color(0xFFF1D9B5))),
       ),
       body: _busy
           ? Center(
@@ -818,7 +1014,13 @@ class _ShelfState extends State<Shelf> with TickerProviderStateMixin {
               ]),
             )
           : _books.isEmpty
-          ? const Center(child: Text('写真・PDF・zip を選んで読み始めよう'))
+          ? const Center(
+              child: Padding(
+                padding: EdgeInsets.all(24),
+                child: Text('この本棚には、まだ本がありません。\n右下の「本を追加」で入れましょう',
+                    textAlign: TextAlign.center),
+              ),
+            )
           : Listener(
               behavior: HitTestBehavior.translucent, // 棚のどこで2本指を置いても反応する
               onPointerDown: _onPtrDown,
@@ -1366,8 +1568,10 @@ class _ZoomPainter extends CustomPainter {
 
 /// 名前の変更ダイアログ(入力欄は、このダイアログが閉じるときに片付ける)
 class _RenameDialog extends StatefulWidget {
-  const _RenameDialog({required this.initial});
+  const _RenameDialog({required this.initial, this.title = '本の名前を変更', this.hint = '本の名前'});
   final String initial;
+  final String title;
+  final String hint;
   @override
   State<_RenameDialog> createState() => _RenameDialogState();
 }
@@ -1384,11 +1588,11 @@ class _RenameDialogState extends State<_RenameDialog> {
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('本の名前を変更'),
+      title: Text(widget.title),
       content: TextField(
         controller: _ctrl,
         autofocus: true,
-        decoration: const InputDecoration(hintText: '本の名前'),
+        decoration: InputDecoration(hintText: widget.hint),
         onSubmitted: (v) => Navigator.pop(context, v.trim()),
       ),
       actions: [
@@ -1433,74 +1637,173 @@ class _WoodPainter extends CustomPainter {
 }
 
 
-/* ---------------- 並べ替え ---------------- */
-class ReorderPage extends StatefulWidget {
-  const ReorderPage({super.key, required this.books, required this.onChanged});
-  final List<Book> books;
-  final VoidCallback onChanged;
+/* ---------------- 本棚の一覧(ホーム) ---------------- */
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
   @override
-  State<ReorderPage> createState() => _ReorderPageState();
+  State<HomePage> createState() => _HomePageState();
 }
 
-class _ReorderPageState extends State<ReorderPage> {
+class _HomePageState extends State<HomePage> {
+  static const cream = Color(0xFFF1D9B5);
+  static const tan = Color(0xFFD9B98A);
+
   @override
-  Widget build(BuildContext context) {
-    final books = widget.books;
-    const ink = Color(0xFF111111);
-    return Scaffold(
-      backgroundColor: Colors.white,
-      appBar: AppBar(
-        backgroundColor: Colors.white,
-        surfaceTintColor: Colors.white,
-        foregroundColor: ink,
-        title: const Text('並べ替え', style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.2)),
+  void initState() {
+    super.initState();
+    AppData.I.load().then((_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  void _snack(String msg) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+  }
+
+  Future<void> _addShelf() async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (c) => const _RenameDialog(
+          initial: '', title: '新しい本棚の名前', hint: '例: ダンダダン / 小説 / 仕事'),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() => AppData.I.shelves.add(ShelfInfo(DateTime.now().millisecondsSinceEpoch.toString(), name)));
+    await AppData.I.save();
+  }
+
+  Future<void> _renameShelf(ShelfInfo s) async {
+    final name = await showDialog<String>(
+      context: context,
+      builder: (c) => _RenameDialog(initial: s.name, title: '本棚の名前を変更', hint: '本棚の名前'),
+    );
+    if (name == null || name.isEmpty) return;
+    setState(() => s.name = name);
+    await AppData.I.save();
+  }
+
+  Future<void> _deleteShelf(ShelfInfo s) async {
+    final data = AppData.I;
+    if (data.shelves.length <= 1) {
+      _snack('最後の1つの本棚は、削除できません');
+      return;
+    }
+    final other = data.shelves.firstWhere((e) => e.id != s.id);
+    final count = data.booksOf(s.id).length;
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (c) => AlertDialog(
+        title: Text('「${s.name}」を削除しますか?'),
+        content: Text(count == 0 ? 'この本棚は、空です。' : '中の$count冊は、「${other.name}」へ移ります。'),
         actions: [
-          TextButton(
-            onPressed: () {
-              setState(() => books.sort((a, b) => natCompare(a.title, b.title)));
-              widget.onChanged();
-            },
-            child: const Text('名前順に', style: TextStyle(color: Color(0xFF1565C0))),
-          ),
+          TextButton(onPressed: () => Navigator.pop(c, false), child: const Text('やめる')),
+          TextButton(onPressed: () => Navigator.pop(c, true), child: const Text('削除')),
         ],
       ),
-      body: ReorderableListView.builder(
-        buildDefaultDragHandles: false,
-        itemCount: books.length,
-        onReorder: (oldIndex, newIndex) {
-          setState(() {
-            if (newIndex > oldIndex) newIndex -= 1;
-            final b = books.removeAt(oldIndex);
-            books.insert(newIndex, b);
-          });
-          widget.onChanged();
-        },
-        itemBuilder: (c, i) {
-          final b = books[i];
-          return Padding(
-            key: ValueKey(b.id),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-            child: ListTile(
-            tileColor: const Color(0xFFF2F2F2),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-            leading: SizedBox(
-              width: 44,
-              height: 62,
-              child: Image.file(File(b.pages.first), fit: BoxFit.cover, cacheWidth: 200),
+    );
+    if (ok != true) return;
+    setState(() {
+      for (final b in data.booksOf(s.id)) {
+        b.shelfId = other.id;
+      }
+      data.shelves.remove(s);
+    });
+    await data.save();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final data = AppData.I;
+    return Scaffold(
+      backgroundColor: const Color(0xFF2A1809),
+      appBar: AppBar(
+        backgroundColor: const Color(0xFF1C0F05),
+        title: const Text('SideBooks',
+            style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, color: cream)),
+      ),
+      body: !data.loaded
+          ? const Center(child: CircularProgressIndicator())
+          : ReorderableListView.builder(
+              padding: const EdgeInsets.fromLTRB(0, 10, 0, 110),
+              buildDefaultDragHandles: false,
+              itemCount: data.shelves.length,
+              onReorder: (o, n) {
+                setState(() {
+                  if (n > o) n -= 1;
+                  final s = data.shelves.removeAt(o);
+                  data.shelves.insert(n, s);
+                });
+                data.save();
+              },
+              itemBuilder: (c, i) {
+                final s = data.shelves[i];
+                final books = data.booksOf(s.id);
+                return Padding(
+                  key: ValueKey(s.id),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                  child: Material(
+                    color: const Color(0xFF6B4423),
+                    borderRadius: BorderRadius.circular(14),
+                    child: InkWell(
+                      borderRadius: BorderRadius.circular(14),
+                      onTap: () => Navigator.push(
+                        context,
+                        MaterialPageRoute(builder: (_) => Shelf(info: s)),
+                      ).then((_) => setState(() {})),
+                      child: Padding(
+                        padding: const EdgeInsets.all(12),
+                        child: Row(children: [
+                          // 先頭の本の表紙(なければ、棚のアイコン)
+                          SizedBox(
+                            width: 52,
+                            height: 74,
+                            child: books.isEmpty
+                                ? const DecoratedBox(
+                                    decoration: BoxDecoration(color: Color(0xFF4A2D14)),
+                                    child: Icon(Icons.menu_book, color: tan),
+                                  )
+                                : Image.file(File(books.first.pages.first), fit: BoxFit.cover, cacheWidth: 200),
+                          ),
+                          const SizedBox(width: 14),
+                          Expanded(
+                            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                              Text(s.name,
+                                  maxLines: 2,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 19, fontWeight: FontWeight.w700, color: cream)),
+                              const SizedBox(height: 4),
+                              Text('${books.length}冊', style: const TextStyle(color: tan, fontSize: 14)),
+                            ]),
+                          ),
+                          PopupMenuButton<String>(
+                            icon: const Icon(Icons.more_vert, color: cream),
+                            onSelected: (v) {
+                              if (v == 'rename') _renameShelf(s);
+                              if (v == 'delete') _deleteShelf(s);
+                            },
+                            itemBuilder: (c) => const [
+                              PopupMenuItem(value: 'rename', child: Text('名前を変更')),
+                              PopupMenuItem(value: 'delete', child: Text('削除')),
+                            ],
+                          ),
+                          ReorderableDragStartListener(
+                            index: i,
+                            child: const Padding(
+                              padding: EdgeInsets.all(8),
+                              child: Icon(Icons.drag_handle, color: tan),
+                            ),
+                          ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                );
+              },
             ),
-            title: Text(b.title, maxLines: 2, overflow: TextOverflow.ellipsis, style: const TextStyle(color: ink)),
-            subtitle: Text('${b.pages.length}ページ', style: const TextStyle(color: Color(0xFF555555))),
-            // 右の「≡」を指でつかんで、上下に動かす
-            trailing: ReorderableDragStartListener(
-              index: i,
-              child: const Padding(
-                padding: EdgeInsets.all(12),
-                child: Icon(Icons.drag_handle, color: Color(0xFF333333)),
-              ),
-            ),
-          ));
-        },
+      floatingActionButton: FloatingActionButton.extended(
+        onPressed: _addShelf,
+        icon: const Icon(Icons.add),
+        label: const Text('本棚を追加'),
       ),
     );
   }

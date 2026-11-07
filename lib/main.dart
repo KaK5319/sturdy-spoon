@@ -25,7 +25,7 @@ class SideBooksApp extends StatelessWidget {
   const SideBooksApp({super.key});
   @override
   Widget build(BuildContext context) => MaterialApp(
-        title: 'SideBooks',
+        title: '漫画棚',
         debugShowCheckedModeBanner: false,
         theme: ThemeData.dark(useMaterial3: true),
         home: const HomePage(),
@@ -1718,7 +1718,7 @@ class _HomePageState extends State<HomePage> {
       backgroundColor: const Color(0xFF2A1809),
       appBar: AppBar(
         backgroundColor: const Color(0xFF1C0F05),
-        title: const Text('SideBooks',
+        title: const Text('漫画棚',
             style: TextStyle(fontWeight: FontWeight.w800, letterSpacing: 1.5, color: cream)),
       ),
       body: !data.loaded

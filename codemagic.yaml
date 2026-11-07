@@ -15,6 +15,19 @@ workflows:
           test -d android
           ls -la android
 
+      - name: Set app display name to 漫画棚
+        script: |
+          set -e
+          python3 - <<'PYEOF'
+          import re
+          p = "android/app/src/main/AndroidManifest.xml"
+          s = open(p, encoding="utf-8").read()
+          s2 = re.sub(r'android:label="[^"]*"', 'android:label="漫画棚"', s, count=1)
+          assert s2 != s, "android:label not found in AndroidManifest.xml"
+          open(p, "w", encoding="utf-8").write(s2)
+          print("app label set to 漫画棚")
+          PYEOF
+
       - name: Get Flutter packages
         script: |
           flutter pub get

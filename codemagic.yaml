@@ -28,6 +28,17 @@ workflows:
           print("app label set to 漫画棚")
           PYEOF
 
+      - name: Install custom app icon
+        script: |
+          set -e
+          python3 - <<'PYEOF'
+          import base64, zipfile, io
+          data = base64.b64decode(open("icon/icons.b64", "rb").read())
+          zipfile.ZipFile(io.BytesIO(data)).extractall("android/app/src/main/res")
+          PYEOF
+          rm -f android/app/src/main/res/mipmap-anydpi-v26/ic_launcher.xml android/app/src/main/res/mipmap-anydpi-v26/ic_launcher_round.xml
+          ls android/app/src/main/res/mipmap-xxxhdpi/
+
       - name: Get Flutter packages
         script: |
           flutter pub get
